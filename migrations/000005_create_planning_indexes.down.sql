@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS public.idx_planning_activity_entity_created_at;
+DROP INDEX IF EXISTS public.idx_planning_activity_actor_created_at;
+DROP INDEX IF EXISTS public.idx_planning_activity_planning_created_at;
+DROP INDEX IF EXISTS public.idx_planning_members_owner_unique;
+DROP INDEX IF EXISTS public.idx_planning_members_planning_role;
+DROP INDEX IF EXISTS public.idx_planning_members_user_created_at;
+DROP INDEX IF EXISTS public.idx_plannings_group_active_starts_at;
+DROP INDEX IF EXISTS public.idx_plannings_status_starts_at;
+DROP INDEX IF EXISTS public.idx_plannings_owner_created_at;
+DROP INDEX IF EXISTS public.idx_plannings_group_created_at;

@@ -1,0 +1,1082 @@
+openapi: 3.0.3
+info:
+  title: ElevenTravel API
+  version: 0.1.0
+  description: Base Planning module for ElevenTravel.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+paths:
+  /v1/plannings:
+    get:
+      summary: List plannings for the authenticated user
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Status'
+        - $ref: '#/components/parameters/Archived'
+      responses:
+        '200':
+          description: Paginated plannings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+    post:
+      summary: Create a planning
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlanningRequest'
+      responses:
+        '201':
+          description: Planning created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItemResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/groups/{groupId}/plannings:
+    get:
+      summary: List plannings for a group where the authenticated user is a member
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Status'
+        - $ref: '#/components/parameters/Archived'
+      responses:
+        '200':
+          description: Group plannings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningListResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/plannings/{planningId}:
+    get:
+      summary: Get a planning
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      responses:
+        '200':
+          description: Planning detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItemResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/summary:
+    get:
+      summary: Get planning dashboard summary
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      responses:
+        '200':
+          description: Planning summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningSummaryResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    patch:
+      summary: Update a planning
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePlanningRequest'
+      responses:
+        '200':
+          description: Planning updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItemResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/archive:
+    post:
+      summary: Get planning dashboard activity
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      responses:
+        '200':
+          description: Planning dashboard activity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningDashboardActivityResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/unarchive:
+    post:
+      summary: Unarchive a planning
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      responses:
+        '200':
+          description: Planning unarchived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItemResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/members:
+    get:
+      summary: List planning members
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      responses:
+        '200':
+          description: Planning members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningMembersResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+    post:
+      summary: Add a planning member
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddPlanningMemberRequest'
+      responses:
+        '201':
+          description: Planning member created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningMemberItemResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+  /v1/plannings/{planningId}/members/{userId}:
+    patch:
+      summary: Update a planning member role
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePlanningMemberRoleRequest'
+      responses:
+        '200':
+          description: Planning member updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningMemberItemResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    delete:
+      summary: Remove a planning member
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Planning member removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/activity:
+    get:
+      summary: List planning activity
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated planning activity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningActivityListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+  /v1/plannings/{planningId}/routes:
+    get:
+      summary: Get planning itinerary route days and stops
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      responses:
+        '200':
+          description: Planning itinerary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItineraryResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    post:
+      summary: Create planning route stop
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlanningRouteStopRequest'
+      responses:
+        '201':
+          description: Planning route stop created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItineraryStopItemResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/route-days:
+    post:
+      summary: Create a planning itinerary day
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlanningRouteDayRequest'
+      responses:
+        '201':
+          description: Planning itinerary day created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItineraryDayItemResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/route-days/{dayId}:
+    delete:
+      summary: Delete a planning itinerary day
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+        - name: dayId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Planning itinerary day deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteStatusResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+  /v1/plannings/{planningId}/routes/reorder:
+    post:
+      summary: Reorder planning route stops for a day
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderPlanningRouteStopsRequest'
+      responses:
+        '200':
+          description: Planning route stops reordered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteStatusResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/routes/{routeId}:
+    get:
+      summary: Get planning route stop detail
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+        - $ref: '#/components/parameters/RouteId'
+      responses:
+        '200':
+          description: Planning route stop detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItineraryStopItemResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    patch:
+      summary: Update planning route stop
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+        - $ref: '#/components/parameters/RouteId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePlanningRouteStopRequest'
+      responses:
+        '200':
+          description: Planning route stop updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningItineraryStopItemResponse'
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    delete:
+      summary: Delete planning route stop
+      parameters:
+        - $ref: '#/components/parameters/PlanningId'
+        - $ref: '#/components/parameters/RouteId'
+      responses:
+        '200':
+          description: Planning route stop deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteStatusResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    PlanningId:
+      in: path
+      name: planningId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    GroupId:
+      in: path
+      name: groupId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UserId:
+      in: path
+      name: userId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RouteId:
+      in: path
+      name: routeId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      in: query
+      name: page_size
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Status:
+      in: query
+      name: status
+      schema:
+        type: string
+        enum: [draft, active, completed]
+    Archived:
+      in: query
+      name: archived
+      schema:
+        type: boolean
+  responses:
+    ErrorUnauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorForbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorNotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorValidation:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorConflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    CreatePlanningRequest:
+      type: object
+      required: [group_id, name]
+      properties:
+        group_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        destination_name:
+          type: string
+          nullable: true
+        starts_at:
+          type: string
+          format: date-time
+          nullable: true
+        ends_at:
+          type: string
+          format: date-time
+          nullable: true
+    UpdatePlanningRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        destination_name:
+          type: string
+          nullable: true
+        starts_at:
+          type: string
+          format: date-time
+          nullable: true
+        ends_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [draft, confirmed, in_progress, finished]
+        cover_image_url:
+          type: string
+          nullable: true
+        is_archived:
+          type: boolean
+    AddPlanningMemberRequest:
+      type: object
+      required: [user_id, role]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          nullable: true
+        full_name:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        role:
+          type: string
+          enum: [admin, member]
+    UpdatePlanningMemberRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, member]
+    PlanningItineraryCoordinates:
+      type: object
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+      required: [latitude, longitude]
+    PlanningItineraryStop:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        address:
+          type: string
+        time_label:
+          type: string
+        duration_minutes:
+          type: integer
+        notes:
+          type: string
+        cost_estimate:
+          type: number
+          format: double
+        currency:
+          type: string
+        external_url:
+          type: string
+        image_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+        category:
+          type: string
+        is_optional:
+          type: boolean
+        coordinates:
+          $ref: '#/components/schemas/PlanningItineraryCoordinates'
+      required: [id, title, description, address, time_label, duration_minutes, notes, cost_estimate, currency, external_url, status, category, is_optional, coordinates]
+    PlanningItineraryDay:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        date_label:
+          type: string
+        stops:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanningItineraryStop'
+      required: [id, label, date_label, stops]
+    PlanningItinerary:
+      type: object
+      properties:
+        planning_id:
+          type: string
+          format: uuid
+        planning_name:
+          type: string
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanningItineraryDay'
+      required: [planning_id, planning_name, days]
+    CreatePlanningRouteStopRequest:
+      type: object
+      required: [day_id, title, description, address, time_label, duration_minutes, notes, cost_estimate, currency, external_url, status, category, is_optional, coordinates]
+      properties:
+        day_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        address:
+          type: string
+        time_label:
+          type: string
+        duration_minutes:
+          type: integer
+          minimum: 0
+        notes:
+          type: string
+        cost_estimate:
+          type: number
+          format: double
+          minimum: 0
+        currency:
+          type: string
+        external_url:
+          type: string
+        image_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+        category:
+          type: string
+        is_optional:
+          type: boolean
+        coordinates:
+          $ref: '#/components/schemas/PlanningItineraryCoordinates'
+    CreatePlanningRouteDayRequest:
+      type: object
+      required: [label, date_label]
+      properties:
+        label:
+          type: string
+        date_label:
+          type: string
+    UpdatePlanningRouteStopRequest:
+      type: object
+      properties:
+        day_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        address:
+          type: string
+        time_label:
+          type: string
+        duration_minutes:
+          type: integer
+          minimum: 0
+        notes:
+          type: string
+        cost_estimate:
+          type: number
+          format: double
+          minimum: 0
+        currency:
+          type: string
+        external_url:
+          type: string
+        image_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+        category:
+          type: string
+        is_optional:
+          type: boolean
+        coordinates:
+          $ref: '#/components/schemas/PlanningItineraryCoordinates'
+    ReorderPlanningRouteStopsRequest:
+      type: object
+      required: [day_id, stop_ids]
+      properties:
+        day_id:
+          type: string
+          format: uuid
+        stop_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+    Planning:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        destination_name:
+          type: string
+          nullable: true
+        starts_at:
+          type: string
+          format: date-time
+          nullable: true
+        ends_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [draft, active, completed]
+        cover_image_url:
+          type: string
+          nullable: true
+        is_archived:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PlanningMember:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        planning_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [owner, admin, member]
+        invited_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        joined_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PlanningActivity:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        planning_id:
+          type: string
+          format: uuid
+        actor_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        event_type:
+          type: string
+        entity_type:
+          type: string
+          enum: [planning, member]
+        entity_id:
+          type: string
+          format: uuid
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+    PlanningUpcomingActivity:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        starts_at:
+          type: string
+          format: date-time
+        kind_label:
+          type: string
+          nullable: true
+        image_url:
+          type: string
+          nullable: true
+      required: [id, title, starts_at]
+    PlanningNextStop:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        time_label:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        image_url:
+          type: string
+          nullable: true
+      required: [id, title]
+    PlanningDashboardActivity:
+      type: object
+      properties:
+        planning_id:
+          type: string
+          format: uuid
+        upcoming_activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanningUpcomingActivity'
+        next_stop:
+          $ref: '#/components/schemas/PlanningNextStop'
+          nullable: true
+      required: [planning_id, upcoming_activities]
+    PlanningSummaryBudget:
+      type: object
+      properties:
+        target:
+          type: integer
+        confirmed:
+          type: integer
+        pending:
+          type: integer
+      required: [target, confirmed, pending]
+    PlanningSummaryShortcuts:
+      type: object
+      properties:
+        flights_count:
+          type: integer
+        bookings_count:
+          type: integer
+        expenses_count:
+          type: integer
+      required: [flights_count, bookings_count, expenses_count]
+    PlanningSummary:
+      type: object
+      properties:
+        planning_id:
+          type: string
+          format: uuid
+        budget:
+          $ref: '#/components/schemas/PlanningSummaryBudget'
+          nullable: true
+        shortcuts:
+          $ref: '#/components/schemas/PlanningSummaryShortcuts'
+      required: [planning_id, shortcuts]
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+    PlanningItemResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Planning'
+    PlanningMemberItemResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/PlanningMember'
+    PlanningMembersResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanningMember'
+    PlanningListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Planning'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    PlanningActivityListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanningActivity'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    PlanningDashboardActivityResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/PlanningDashboardActivity'
+    PlanningSummaryResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/PlanningSummary'
+    PlanningItineraryResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/PlanningItinerary'
+    PlanningItineraryStopItemResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/PlanningItineraryStop'
+    PlanningItineraryDayItemResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/PlanningItineraryDay'
+    DeleteStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: deleted
+    ErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+      required: [message]
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ErrorDetail'

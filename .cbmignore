@@ -1,0 +1,5 @@
+.gocache/
+vendor/
+tmp/
+coverage/
+*.log
