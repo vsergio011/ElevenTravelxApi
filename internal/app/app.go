@@ -21,7 +21,7 @@ type Application struct {
 }
 
 func New(ctx context.Context, cfg config.Config) (*Application, error) {
-	pool, err := db.NewPostgresPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPostgresPool(ctx, cfg.DatabaseURL, cfg.DatabaseMaxConns)
 	if err != nil {
 		return nil, err
 	}

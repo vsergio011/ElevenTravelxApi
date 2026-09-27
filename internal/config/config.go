@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 type Config struct {
 	Port                string
 	DatabaseURL         string
+	DatabaseMaxConns    int32
 	SupabaseJWTSecret   string
 	SupabaseJWTIssuer   string
 	SupabaseJWTAudience string
@@ -29,6 +31,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Port:                getEnv("PORT", "8080"),
 		DatabaseURL:         os.Getenv("DATABASE_URL"),
+		DatabaseMaxConns:    getEnvInt32("DATABASE_MAX_CONNS", 3),
 		SupabaseJWTSecret:   os.Getenv("SUPABASE_JWT_SECRET"),
 		SupabaseJWTIssuer:   os.Getenv("SUPABASE_JWT_ISSUER"),
 		SupabaseJWTAudience: os.Getenv("SUPABASE_JWT_AUDIENCE"),
@@ -40,6 +43,9 @@ func Load() (Config, error) {
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
+	}
+	if cfg.DatabaseMaxConns < 1 {
+		return Config{}, errors.New("DATABASE_MAX_CONNS must be greater than zero")
 	}
 
 	if cfg.SupabaseJWTSecret == "" && cfg.SupabaseJWTIssuer == "" {
@@ -59,6 +65,20 @@ func getEnv(key string, fallback string) string {
 	}
 
 	return fallback
+}
+
+func getEnvInt32(key string, fallback int32) int32 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 32)
+	if err != nil {
+		return fallback
+	}
+
+	return int32(parsed)
 }
 
 func getCSVEnv(key string, fallback []string) []string {
