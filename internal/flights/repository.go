@@ -90,22 +90,32 @@ func (r *PostgresRepository) List(ctx context.Context, planning uuid.UUID, filte
 	}
 	defer rows.Close()
 	result := []Flight{}
+	flightIDs := make([]uuid.UUID, 0)
 	for rows.Next() {
 		flight, scanErr := scanFlight(rows)
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		flight.Segments, scanErr = listSegments(ctx, r.pool, flight.ID)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		flight.ParticipantUserIDs, scanErr = listParticipants(ctx, r.pool, flight.ID)
-		if scanErr != nil {
-			return nil, scanErr
-		}
 		result = append(result, flight)
+		flightIDs = append(flightIDs, flight.ID)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	segments, err := listSegmentsForFlights(ctx, r.pool, flightIDs)
+	if err != nil {
+		return nil, err
+	}
+	participants, err := listParticipantsForFlights(ctx, r.pool, flightIDs)
+	if err != nil {
+		return nil, err
+	}
+	for index := range result {
+		result[index].Segments = segments[result[index].ID]
+		result[index].ParticipantUserIDs = participants[result[index].ID]
+	}
+	return result, nil
 }
 
 func (r *PostgresRepository) Update(ctx context.Context, planning, id uuid.UUID, input UpdateInput) (Flight, error) {
@@ -197,6 +207,26 @@ func listParticipants(ctx context.Context, q queryer, id uuid.UUID) ([]uuid.UUID
 	}
 	return result, rows.Err()
 }
+
+func listParticipantsForFlights(ctx context.Context, q queryer, ids []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	result := make(map[uuid.UUID][]uuid.UUID, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	rows, err := q.Query(ctx, `SELECT flight_id, user_id FROM public.flight_participants WHERE flight_id = ANY($1) ORDER BY flight_id, user_id`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var flightID, userID uuid.UUID
+		if err := rows.Scan(&flightID, &userID); err != nil {
+			return nil, err
+		}
+		result[flightID] = append(result[flightID], userID)
+	}
+	return result, rows.Err()
+}
 func replaceSegments(ctx context.Context, q queryer, id uuid.UUID, segments []Segment) error {
 	if _, err := q.Exec(ctx, `DELETE FROM public.flight_segments WHERE flight_id=$1`, id); err != nil {
 		return err
@@ -221,6 +251,27 @@ func listSegments(ctx context.Context, q queryer, id uuid.UUID) ([]Segment, erro
 			return nil, err
 		}
 		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
+func listSegmentsForFlights(ctx context.Context, q queryer, ids []uuid.UUID) (map[uuid.UUID][]Segment, error) {
+	result := make(map[uuid.UUID][]Segment, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	rows, err := q.Query(ctx, `SELECT flight_id,id,direction,position,origin_label,origin_city,origin_airport_name,origin_airport_code,origin_mapbox_id,destination_label,destination_city,destination_airport_name,destination_airport_code,destination_mapbox_id,departure_at,arrival_at,departure_terminal,arrival_terminal,airline,flight_number,origin_timezone,destination_timezone FROM public.flight_segments WHERE flight_id = ANY($1) ORDER BY flight_id, direction, position`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var flightID uuid.UUID
+		var segment Segment
+		if err := rows.Scan(&flightID, &segment.ID, &segment.Direction, &segment.Position, &segment.OriginLabel, &segment.OriginCity, &segment.OriginAirportName, &segment.OriginAirportCode, &segment.OriginMapboxID, &segment.DestinationLabel, &segment.DestinationCity, &segment.DestinationAirportName, &segment.DestinationAirportCode, &segment.DestinationMapboxID, &segment.DepartureAt, &segment.ArrivalAt, &segment.DepartureTerminal, &segment.ArrivalTerminal, &segment.Airline, &segment.FlightNumber, &segment.OriginTimezone, &segment.DestinationTimezone); err != nil {
+			return nil, err
+		}
+		result[flightID] = append(result[flightID], segment)
 	}
 	return result, rows.Err()
 }

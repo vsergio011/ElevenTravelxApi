@@ -31,6 +31,9 @@ func main() {
 		Addr:              cfg.HTTPAddress(),
 		Handler:           application.Handler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      20 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {

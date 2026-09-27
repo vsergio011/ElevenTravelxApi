@@ -45,7 +45,7 @@ type AeroDataBoxClient struct {
 }
 
 func NewAeroDataBoxClient(apiKey, host string) *AeroDataBoxClient {
-	return newAeroDataBoxClient("https://"+host, apiKey, host, http.DefaultClient)
+	return newAeroDataBoxClient("https://"+host, apiKey, host, &http.Client{Timeout: 8 * time.Second})
 }
 
 func newAeroDataBoxClient(baseURL, apiKey, host string, httpClient *http.Client) *AeroDataBoxClient {

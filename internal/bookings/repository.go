@@ -117,24 +117,31 @@ func (r *PostgresRepository) ListBookings(ctx context.Context, planningID uuid.U
 	defer rows.Close()
 
 	bookings := make([]Booking, 0)
+	bookingIDs := make([]uuid.UUID, 0, page.Size)
 	for rows.Next() {
 		booking, scanErr := scanBooking(rows)
 		if scanErr != nil {
 			return PageResult[Booking]{}, scanErr
 		}
-		booking.ParticipantUserIDs, scanErr = r.listParticipants(ctx, booking.ID)
-		if scanErr != nil {
-			return PageResult[Booking]{}, scanErr
-		}
-		booking.Payments, scanErr = r.listPayments(ctx, booking.ID)
-		if scanErr != nil {
-			return PageResult[Booking]{}, scanErr
-		}
 		bookings = append(bookings, booking)
+		bookingIDs = append(bookingIDs, booking.ID)
 	}
 
 	if rows.Err() != nil {
 		return PageResult[Booking]{}, rows.Err()
+	}
+
+	participants, err := r.listParticipantsForBookings(ctx, bookingIDs)
+	if err != nil {
+		return PageResult[Booking]{}, err
+	}
+	payments, err := r.listPaymentsForBookings(ctx, bookingIDs)
+	if err != nil {
+		return PageResult[Booking]{}, err
+	}
+	for index := range bookings {
+		bookings[index].ParticipantUserIDs = participants[bookings[index].ID]
+		bookings[index].Payments = payments[bookings[index].ID]
 	}
 
 	return newPageResult(bookings, page, total), nil
@@ -259,15 +266,24 @@ func scanBooking(scanner bookingScanner) (Booking, error) {
 }
 
 func (r *PostgresRepository) replaceParticipants(ctx context.Context, bookingID uuid.UUID, userIDs []uuid.UUID) error {
-	if _, err := r.pool.Exec(ctx, `DELETE FROM public.booking_participants WHERE booking_id = $1`, bookingID); err != nil {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	for _, userID := range userIDs {
-		if _, err := r.pool.Exec(ctx, `INSERT INTO public.booking_participants (booking_id, user_id) VALUES ($1, $2)`, bookingID, userID); err != nil {
-			return err
-		}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM public.booking_participants WHERE booking_id = $1`, bookingID); err != nil {
+		return err
 	}
-	return nil
+	batch := &pgx.Batch{}
+	for _, userID := range userIDs {
+		batch.Queue(`INSERT INTO public.booking_participants (booking_id, user_id) VALUES ($1, $2)`, bookingID, userID)
+	}
+	results := tx.SendBatch(ctx, batch)
+	if err := results.Close(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *PostgresRepository) listParticipants(ctx context.Context, bookingID uuid.UUID) ([]uuid.UUID, error) {
@@ -288,15 +304,24 @@ func (r *PostgresRepository) listParticipants(ctx context.Context, bookingID uui
 }
 
 func (r *PostgresRepository) replacePayments(ctx context.Context, bookingID uuid.UUID, payments []Payment) error {
-	if _, err := r.pool.Exec(ctx, `DELETE FROM public.booking_payments WHERE booking_id = $1`, bookingID); err != nil {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	for _, payment := range payments {
-		if _, err := r.pool.Exec(ctx, `INSERT INTO public.booking_payments (booking_id, user_id, amount_cents, paid_at) VALUES ($1, $2, $3, $4)`, bookingID, payment.UserID, payment.AmountCents, payment.PaidAt); err != nil {
-			return err
-		}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM public.booking_payments WHERE booking_id = $1`, bookingID); err != nil {
+		return err
 	}
-	return nil
+	batch := &pgx.Batch{}
+	for _, payment := range payments {
+		batch.Queue(`INSERT INTO public.booking_payments (booking_id, user_id, amount_cents, paid_at) VALUES ($1, $2, $3, $4)`, bookingID, payment.UserID, payment.AmountCents, payment.PaidAt)
+	}
+	results := tx.SendBatch(ctx, batch)
+	if err := results.Close(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *PostgresRepository) listPayments(ctx context.Context, bookingID uuid.UUID) ([]Payment, error) {
@@ -312,6 +337,47 @@ func (r *PostgresRepository) listPayments(ctx context.Context, bookingID uuid.UU
 			return nil, err
 		}
 		result = append(result, payment)
+	}
+	return result, rows.Err()
+}
+
+func (r *PostgresRepository) listParticipantsForBookings(ctx context.Context, bookingIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	result := make(map[uuid.UUID][]uuid.UUID, len(bookingIDs))
+	if len(bookingIDs) == 0 {
+		return result, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT booking_id, user_id FROM public.booking_participants WHERE booking_id = ANY($1) ORDER BY booking_id, user_id`, bookingIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var bookingID, userID uuid.UUID
+		if err := rows.Scan(&bookingID, &userID); err != nil {
+			return nil, err
+		}
+		result[bookingID] = append(result[bookingID], userID)
+	}
+	return result, rows.Err()
+}
+
+func (r *PostgresRepository) listPaymentsForBookings(ctx context.Context, bookingIDs []uuid.UUID) (map[uuid.UUID][]Payment, error) {
+	result := make(map[uuid.UUID][]Payment, len(bookingIDs))
+	if len(bookingIDs) == 0 {
+		return result, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT id, booking_id, user_id, amount_cents, paid_at FROM public.booking_payments WHERE booking_id = ANY($1) ORDER BY booking_id, paid_at, id`, bookingIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var bookingID uuid.UUID
+		var payment Payment
+		if err := rows.Scan(&payment.ID, &bookingID, &payment.UserID, &payment.AmountCents, &payment.PaidAt); err != nil {
+			return nil, err
+		}
+		result[bookingID] = append(result[bookingID], payment)
 	}
 	return result, rows.Err()
 }
