@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
@@ -270,7 +269,7 @@ func (r *PostgresRepository) ListPlannings(ctx context.Context, filters Planning
 		WHERE pm.user_id = $1 OR p.owner_user_id = $1
 	`
 	listQuery := `
-		SELECT p.id, p.group_id, p.owner_user_id, p.name, p.description, p.destination_name, p.starts_at, p.ends_at, p.status, p.cover_image_url, p.is_archived, p.created_at, p.updated_at
+		SELECT p.id, p.group_id::text, p.owner_user_id, p.name, p.description, p.destination_name, p.starts_at, p.ends_at, p.status, p.cover_image_url, p.is_archived, p.created_at, p.updated_at
 		FROM public.plannings p
 		LEFT JOIN public.planning_members pm ON pm.planning_id = p.id AND pm.user_id = $1
 		WHERE pm.user_id = $1 OR p.owner_user_id = $1
@@ -280,8 +279,8 @@ func (r *PostgresRepository) ListPlannings(ctx context.Context, filters Planning
 	argIndex := 2
 
 	if filters.GroupID != nil {
-		countQuery += fmt.Sprintf(" AND p.group_id = $%d", argIndex)
-		listQuery += fmt.Sprintf(" AND p.group_id = $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND p.group_id::text = $%d::text", argIndex)
+		listQuery += fmt.Sprintf(" AND p.group_id::text = $%d::text", argIndex)
 		args = append(args, *filters.GroupID)
 		argIndex++
 	}
@@ -1182,7 +1181,7 @@ type planningScanner interface {
 
 func scanPlanning(scanner planningScanner) (Planning, error) {
 	planning := Planning{}
-	var groupID pgtype.UUID
+	var groupID *string
 	err := scanner.Scan(
 		&planning.ID,
 		&groupID,
@@ -1202,9 +1201,11 @@ func scanPlanning(scanner planningScanner) (Planning, error) {
 		return Planning{}, err
 	}
 
-	if groupID.Valid {
-		parsedGroupID := uuid.UUID(groupID.Bytes)
-		planning.GroupID = &parsedGroupID
+	if groupID != nil {
+		parsedGroupID, parseErr := uuid.Parse(*groupID)
+		if parseErr == nil {
+			planning.GroupID = &parsedGroupID
+		}
 	}
 
 	return planning, nil
