@@ -301,7 +301,7 @@ func (r *PostgresRepository) ListPlannings(ctx context.Context, filters Planning
 
 	var total int
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return PageResult[Planning]{}, err
+		return PageResult[Planning]{}, fmt.Errorf("list plannings count query: %w", err)
 	}
 
 	page := filters.Page
@@ -311,7 +311,7 @@ func (r *PostgresRepository) ListPlannings(ctx context.Context, filters Planning
 
 	rows, err := r.pool.Query(ctx, listQuery, args...)
 	if err != nil {
-		return PageResult[Planning]{}, err
+		return PageResult[Planning]{}, fmt.Errorf("list plannings data query: %w", err)
 	}
 	defer rows.Close()
 
@@ -319,13 +319,13 @@ func (r *PostgresRepository) ListPlannings(ctx context.Context, filters Planning
 	for rows.Next() {
 		planning, scanErr := scanPlanning(rows)
 		if scanErr != nil {
-			return PageResult[Planning]{}, scanErr
+			return PageResult[Planning]{}, fmt.Errorf("list plannings scan: %w", scanErr)
 		}
 		plannings = append(plannings, planning)
 	}
 
 	if rows.Err() != nil {
-		return PageResult[Planning]{}, rows.Err()
+		return PageResult[Planning]{}, fmt.Errorf("list plannings rows: %w", rows.Err())
 	}
 
 	return newPageResult(plannings, page, total), nil
