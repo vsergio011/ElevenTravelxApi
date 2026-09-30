@@ -24,6 +24,7 @@ type UserProfileService interface {
 	UnfollowUser(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) error
 	ListFollowers(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, limit int) ([]UserSummary, error)
 	ListFollowing(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, limit int) ([]UserSummary, error)
+	SearchUsers(ctx context.Context, actorUserID uuid.UUID, query string, limit int) ([]UserSearchResult, error)
 	AddLocation(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, input CreateUserLocationInput) (UserLocationPin, error)
 	UpdateLocation(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, locationID uuid.UUID, input UpdateUserLocationInput) (UserLocationPin, error)
 	DeleteLocation(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, locationID uuid.UUID) error
@@ -155,6 +156,28 @@ func (h *Handler) listFollowers(writer http.ResponseWriter, request *http.Reques
 
 func (h *Handler) listFollowing(writer http.ResponseWriter, request *http.Request) {
 	h.listFollows(writer, request, false)
+}
+
+func (h *Handler) searchUsers(writer http.ResponseWriter, request *http.Request) {
+	actorUser, ok := middleware.AuthUserFromContext(request.Context())
+	if !ok {
+		response.WriteError(writer, http.StatusUnauthorized, "unauthorized", "Authenticated user not found in request context", nil)
+		return
+	}
+
+	query := strings.TrimSpace(request.URL.Query().Get("q"))
+	if len(query) < 2 {
+		response.WriteError(writer, http.StatusBadRequest, "validation_error", "q must be at least 2 characters", []response.ErrorDetail{{Field: "q", Message: "must be at least 2 characters"}})
+		return
+	}
+
+	items, err := h.service.SearchUsers(request.Context(), actorUser.UserID, query, parseIntQueryParam(request, "limit", 20))
+	if err != nil {
+		h.writeDomainError(writer, err)
+		return
+	}
+
+	response.WriteJSON(writer, http.StatusOK, map[string][]UserSearchResultResponse{"data": toUserSearchResultResponse(items)})
 }
 
 func (h *Handler) listFollows(writer http.ResponseWriter, request *http.Request, followers bool) {

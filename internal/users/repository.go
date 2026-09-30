@@ -22,6 +22,7 @@ type Repository interface {
 	Unfollow(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) error
 	ListFollowers(ctx context.Context, userID uuid.UUID, limit int) ([]UserSummary, error)
 	ListFollowing(ctx context.Context, userID uuid.UUID, limit int) ([]UserSummary, error)
+	SearchUsers(ctx context.Context, actorUserID uuid.UUID, query string, limit int) ([]UserSearchResult, error)
 	ListLocationPins(ctx context.Context, userID uuid.UUID) ([]UserLocationPin, error)
 	ListMedia(ctx context.Context, userID uuid.UUID, limit int) ([]UserMediaAsset, error)
 	ListBadges(ctx context.Context, userID uuid.UUID, limit int) ([]UserBadge, error)
@@ -234,6 +235,41 @@ func (r *PostgresRepository) ListFollowing(ctx context.Context, userID uuid.UUID
 	for rows.Next() {
 		var item UserSummary
 		if scanErr := rows.Scan(&item.UserID, &item.Username, &item.FullName, &item.AvatarURL, &item.FollowedAt); scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+
+	return items, rows.Err()
+}
+
+func (r *PostgresRepository) SearchUsers(ctx context.Context, actorUserID uuid.UUID, query string, limit int) ([]UserSearchResult, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			p.user_id,
+			p.username,
+			p.full_name,
+			p.avatar_url,
+			EXISTS(
+				SELECT 1
+				FROM public.user_follows f
+				WHERE f.follower_user_id = $1 AND f.following_user_id = p.user_id
+			) AS is_following
+		FROM public.user_profiles p
+		WHERE p.user_id <> $1
+		  AND (p.username ILIKE '%' || $2 || '%' OR p.full_name ILIKE '%' || $2 || '%')
+		ORDER BY CASE WHEN p.username ILIKE $2 || '%' THEN 0 ELSE 1 END, p.username
+		LIMIT $3
+	`, actorUserID, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]UserSearchResult, 0)
+	for rows.Next() {
+		var item UserSearchResult
+		if scanErr := rows.Scan(&item.UserID, &item.Username, &item.FullName, &item.AvatarURL, &item.IsFollowing); scanErr != nil {
 			return nil, scanErr
 		}
 		items = append(items, item)

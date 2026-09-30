@@ -84,6 +84,14 @@ func (s *Service) ListFollowing(ctx context.Context, actorUserID uuid.UUID, targ
 	return s.repository.ListFollowing(ctx, targetUserID, clampLimit(limit, 100))
 }
 
+func (s *Service) SearchUsers(ctx context.Context, actorUserID uuid.UUID, query string, limit int) ([]UserSearchResult, error) {
+	if _, err := s.repository.EnsureProfile(ctx, actorUserID, ""); err != nil {
+		return nil, err
+	}
+
+	return s.repository.SearchUsers(ctx, actorUserID, strings.TrimSpace(query), clampLimit(limit, 50))
+}
+
 func (s *Service) AddLocation(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, input CreateUserLocationInput) (UserLocationPin, error) {
 	if actorUserID != targetUserID {
 		return UserLocationPin{}, ErrForbidden

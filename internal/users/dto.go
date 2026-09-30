@@ -104,6 +104,15 @@ type UserSummaryResponse struct {
 	FollowedAt time.Time `json:"followed_at"`
 }
 
+type UserSearchResultResponse struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Username    string    `json:"username"`
+	FullName    string    `json:"full_name"`
+	AvatarURL   *string   `json:"avatar_url"`
+	IsFollowing bool      `json:"is_following"`
+	IsMe        bool      `json:"is_me"`
+}
+
 func toProfileResponse(view UserProfileView) UserProfileResponse {
 	pins := make([]UserLocationPinResponse, 0, len(view.MapPins))
 	for _, pin := range view.MapPins {
@@ -180,6 +189,18 @@ func toUserSummaryResponse(items []UserSummary) []UserSummaryResponse {
 			FullName:   item.FullName,
 			AvatarURL:  item.AvatarURL,
 			FollowedAt: item.FollowedAt,
+		})
+	}
+
+	return result
+}
+
+func toUserSearchResultResponse(items []UserSearchResult) []UserSearchResultResponse {
+	result := make([]UserSearchResultResponse, 0, len(items))
+	for _, item := range items {
+		result = append(result, UserSearchResultResponse{
+			UserID: item.UserID, Username: item.Username, FullName: item.FullName, AvatarURL: item.AvatarURL,
+			IsFollowing: item.IsFollowing, IsMe: item.IsMe,
 		})
 	}
 

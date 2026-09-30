@@ -6,6 +6,7 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Route("/users", func(usersRouter chi.Router) {
 		usersRouter.Get("/me/profile", h.getMyProfile)
 		usersRouter.Patch("/me/profile", h.updateMyProfile)
+		usersRouter.Get("/search", h.searchUsers)
 		usersRouter.Get("/{username}/profile", h.getProfileByUsername)
 
 		usersRouter.Post("/{userId}/follow", h.followUser)

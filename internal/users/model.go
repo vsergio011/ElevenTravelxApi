@@ -44,6 +44,15 @@ type UserSummary struct {
 	FollowedAt time.Time
 }
 
+type UserSearchResult struct {
+	UserID      uuid.UUID
+	Username    string
+	FullName    string
+	AvatarURL   *string
+	IsFollowing bool
+	IsMe        bool
+}
+
 type UserLocationPin struct {
 	LocationID               uuid.UUID
 	Name                     string
