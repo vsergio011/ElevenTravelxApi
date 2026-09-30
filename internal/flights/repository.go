@@ -114,6 +114,9 @@ func (r *PostgresRepository) List(ctx context.Context, planning uuid.UUID, filte
 	for index := range result {
 		result[index].Segments = segments[result[index].ID]
 		result[index].ParticipantUserIDs = participants[result[index].ID]
+		if result[index].ParticipantUserIDs == nil {
+			result[index].ParticipantUserIDs = []uuid.UUID{}
+		}
 	}
 	return result, nil
 }
