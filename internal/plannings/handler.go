@@ -23,6 +23,7 @@ type PlanningService interface {
 	GetDashboardActivity(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (PlanningDashboardActivity, error)
 	ListPlannings(ctx context.Context, actorUserID uuid.UUID, filters PlanningFilters) (PageResult[Planning], error)
 	UpdatePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input UpdatePlanningInput) (Planning, error)
+	DeletePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) error
 	ArchivePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (Planning, error)
 	UnarchivePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (Planning, error)
 	ListMembers(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) ([]PlanningMember, error)
@@ -218,6 +219,27 @@ func (h *Handler) updatePlanning(writer http.ResponseWriter, request *http.Reque
 	}
 
 	response.WriteJSON(writer, http.StatusOK, map[string]PlanningResponse{"data": NewPlanningResponse(planning)})
+}
+
+func (h *Handler) deletePlanning(writer http.ResponseWriter, request *http.Request) {
+	actorUser, ok := middleware.AuthUserFromContext(request.Context())
+	if !ok {
+		response.WriteError(writer, http.StatusUnauthorized, "unauthorized", "Authenticated user not found in request context", nil)
+		return
+	}
+
+	planningID, err := parseUUIDParam(request, "planningId")
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid_path_param", err.Error(), nil)
+		return
+	}
+
+	if err := h.service.DeletePlanning(request.Context(), actorUser.UserID, planningID); err != nil {
+		h.writeDomainError(writer, err)
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) archivePlanning(writer http.ResponseWriter, request *http.Request) {

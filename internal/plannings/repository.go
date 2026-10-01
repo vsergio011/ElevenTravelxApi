@@ -27,6 +27,7 @@ type Repository interface {
 	GetUserIDByEmail(ctx context.Context, email string) (uuid.UUID, error)
 	ListMembers(ctx context.Context, planningID uuid.UUID) ([]PlanningMember, error)
 	UpdatePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input UpdatePlanningInput) (Planning, error)
+	DeletePlanning(ctx context.Context, planningID uuid.UUID) error
 	SetPlanningArchived(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, archived bool) (Planning, error)
 	AddMember(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input AddPlanningMemberInput) (PlanningMember, error)
 	UpdateMemberRole(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, targetUserID uuid.UUID, role string) (PlanningMember, error)
@@ -443,6 +444,21 @@ func (r *PostgresRepository) UpdatePlanning(ctx context.Context, actorUserID uui
 	}
 
 	return planning, nil
+}
+
+func (r *PostgresRepository) DeletePlanning(ctx context.Context, planningID uuid.UUID) error {
+	commandTag, err := r.pool.Exec(ctx, `
+		DELETE FROM public.plannings
+		WHERE id = $1
+	`, planningID)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return ErrPlanningNotFound
+	}
+
+	return nil
 }
 
 func (r *PostgresRepository) SetPlanningArchived(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, archived bool) (Planning, error) {

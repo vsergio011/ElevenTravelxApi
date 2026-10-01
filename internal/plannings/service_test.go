@@ -29,6 +29,44 @@ func TestServiceUpdatePlanningRequiresManagerRole(t *testing.T) {
 	require.Zero(t, repo.updatePlanningCalls)
 }
 
+func TestServiceDeletePlanningRequiresOwnerRole(t *testing.T) {
+	t.Parallel()
+
+	actorUserID := uuid.New()
+	planningID := uuid.New()
+	repo := &fakeRepository{
+		planning: Planning{ID: planningID},
+		members: map[uuid.UUID]PlanningMember{
+			actorUserID: {PlanningID: planningID, UserID: actorUserID, Role: RoleAdmin},
+		},
+	}
+	service := NewService(repo)
+
+	err := service.DeletePlanning(context.Background(), actorUserID, planningID)
+
+	require.ErrorIs(t, err, ErrForbidden)
+	require.Zero(t, repo.deletePlanningCalls)
+}
+
+func TestServiceDeletePlanningDeletesAsOwner(t *testing.T) {
+	t.Parallel()
+
+	actorUserID := uuid.New()
+	planningID := uuid.New()
+	repo := &fakeRepository{
+		planning: Planning{ID: planningID},
+		members: map[uuid.UUID]PlanningMember{
+			actorUserID: {PlanningID: planningID, UserID: actorUserID, Role: RoleOwner},
+		},
+	}
+	service := NewService(repo)
+
+	err := service.DeletePlanning(context.Background(), actorUserID, planningID)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.deletePlanningCalls)
+}
+
 func TestServiceAddMemberAllowsAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -121,6 +159,7 @@ type fakeRepository struct {
 	updateMemberRoleCalls  int
 	removeMemberCalls      int
 	setPlanningArchiveCall int
+	deletePlanningCalls    int
 }
 
 func (r *fakeRepository) CreatePlanning(_ context.Context, actorUserID uuid.UUID, input CreatePlanningInput) (Planning, error) {
@@ -222,6 +261,14 @@ func (r *fakeRepository) SetPlanningArchived(_ context.Context, _ uuid.UUID, pla
 	}
 	r.planning.IsArchived = archived
 	return r.planning, nil
+}
+
+func (r *fakeRepository) DeletePlanning(_ context.Context, planningID uuid.UUID) error {
+	r.deletePlanningCalls++
+	if r.planning.ID != planningID {
+		return ErrPlanningNotFound
+	}
+	return nil
 }
 
 func (r *fakeRepository) AddMember(_ context.Context, _ uuid.UUID, planningID uuid.UUID, input AddPlanningMemberInput) (PlanningMember, error) {

@@ -7,6 +7,7 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 		planningsRouter.Get("/", h.listPlannings)
 		planningsRouter.Post("/", h.createPlanning)
 		planningsRouter.Get("/{planningId}", h.getPlanning)
+		planningsRouter.Delete("/{planningId}", h.deletePlanning)
 		planningsRouter.Get("/{planningId}/summary", h.getSummary)
 		planningsRouter.Patch("/{planningId}", h.updatePlanning)
 		planningsRouter.Post("/{planningId}/archive", h.archivePlanning)

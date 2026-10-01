@@ -60,6 +60,18 @@ func (s *Service) UpdatePlanning(ctx context.Context, actorUserID uuid.UUID, pla
 	return s.repository.UpdatePlanning(ctx, actorUserID, planningID, input)
 }
 
+func (s *Service) DeletePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) error {
+	member, err := s.requireMembership(ctx, planningID, actorUserID)
+	if err != nil {
+		return err
+	}
+	if member.Role != RoleOwner {
+		return ErrForbidden
+	}
+
+	return s.repository.DeletePlanning(ctx, planningID)
+}
+
 func (s *Service) ArchivePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (Planning, error) {
 	if _, err := s.requireManagementRole(ctx, planningID, actorUserID); err != nil {
 		return Planning{}, err

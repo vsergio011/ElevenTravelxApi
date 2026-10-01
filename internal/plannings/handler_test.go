@@ -81,6 +81,29 @@ func TestPlanningRoutesReturnForbiddenForMemberUpdate(t *testing.T) {
 	require.Contains(t, responseRecorder.Body.String(), "forbidden")
 }
 
+func TestPlanningRoutesDeletePlanningReturnsNoContent(t *testing.T) {
+	t.Parallel()
+
+	planningID := uuid.New()
+	actorUserID := uuid.New()
+	router := newPlanningTestRouter(&fakePlanningService{
+		deletePlanningFunc: func(_ context.Context, userID uuid.UUID, requestedPlanningID uuid.UUID) error {
+			require.Equal(t, actorUserID, userID)
+			require.Equal(t, planningID, requestedPlanningID)
+			return nil
+		},
+	}, fakeTokenValidator{claims: supabasejwt.Claims{RegisteredClaims: registeredClaims(actorUserID)}})
+
+	request := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/v1/plannings/%s", planningID), nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+	responseRecorder := httptest.NewRecorder()
+
+	router.ServeHTTP(responseRecorder, request)
+
+	require.Equal(t, http.StatusNoContent, responseRecorder.Code)
+	require.Empty(t, responseRecorder.Body.String())
+}
+
 func TestPlanningRouteItineraryReturnsItineraryPayload(t *testing.T) {
 	t.Parallel()
 
@@ -305,6 +328,7 @@ type fakePlanningService struct {
 	getDashboardActivityFunc      func(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (PlanningDashboardActivity, error)
 	listPlanningsFunc             func(ctx context.Context, actorUserID uuid.UUID, filters PlanningFilters) (PageResult[Planning], error)
 	updatePlanningFunc            func(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input UpdatePlanningInput) (Planning, error)
+	deletePlanningFunc            func(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) error
 	archivePlanningFunc           func(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (Planning, error)
 	unarchivePlanningFunc         func(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (Planning, error)
 	listMembersFunc               func(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) ([]PlanningMember, error)
@@ -362,6 +386,13 @@ func (s *fakePlanningService) UpdatePlanning(ctx context.Context, actorUserID uu
 		return s.updatePlanningFunc(ctx, actorUserID, planningID, input)
 	}
 	return Planning{}, nil
+}
+
+func (s *fakePlanningService) DeletePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) error {
+	if s.deletePlanningFunc != nil {
+		return s.deletePlanningFunc(ctx, actorUserID, planningID)
+	}
+	return nil
 }
 
 func (s *fakePlanningService) ArchivePlanning(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (Planning, error) {
