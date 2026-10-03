@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
 	"github.com/google/uuid"
+	"sort"
 	"strings"
-	"time"
 )
 
 func validateInput(input CreateInput) error {
@@ -41,8 +41,7 @@ func validateSegments(segments []Segment) error {
 	if len(segments) == 0 {
 		return fmt.Errorf("at least one segment is required")
 	}
-	last := map[string]time.Time{}
-	positions := map[string]int{}
+	byDirection := map[string][]Segment{}
 	for _, segment := range segments {
 		if segment.Direction != DirectionOutbound && segment.Direction != DirectionReturn {
 			return fmt.Errorf("invalid segment direction")
@@ -53,16 +52,34 @@ func validateSegments(segments []Segment) error {
 		if segment.ArrivalAt.Before(segment.DepartureAt) || segment.ArrivalAt.Equal(segment.DepartureAt) {
 			return fmt.Errorf("arrival must be after departure")
 		}
-		if previous, ok := last[segment.Direction]; ok && segment.DepartureAt.Before(previous) {
-			return fmt.Errorf("segments must be chronological")
+		byDirection[segment.Direction] = append(byDirection[segment.Direction], segment)
+	}
+	for _, itinerary := range byDirection {
+		sort.Slice(itinerary, func(i, j int) bool { return itinerary[i].Position < itinerary[j].Position })
+		for position, segment := range itinerary {
+			if segment.Position != position {
+				return fmt.Errorf("segment positions must be contiguous")
+			}
+			if position == 0 {
+				continue
+			}
+			previous := itinerary[position-1]
+			if segment.DepartureAt.Before(previous.ArrivalAt) {
+				return fmt.Errorf("segments must be chronological")
+			}
+			if !sameAirport(previous.DestinationAirportCode, segment.OriginAirportCode, previous.DestinationLabel, segment.OriginLabel) {
+				return fmt.Errorf("segments must connect to the previous destination")
+			}
 		}
-		if segment.Position != positions[segment.Direction] {
-			return fmt.Errorf("segment positions must be contiguous")
-		}
-		last[segment.Direction] = segment.ArrivalAt
-		positions[segment.Direction]++
 	}
 	return nil
+}
+
+func sameAirport(previousCode, nextCode *string, previousLabel, nextLabel string) bool {
+	if previousCode != nil && nextCode != nil && strings.TrimSpace(*previousCode) != "" && strings.TrimSpace(*nextCode) != "" {
+		return strings.EqualFold(strings.TrimSpace(*previousCode), strings.TrimSpace(*nextCode))
+	}
+	return strings.EqualFold(strings.TrimSpace(previousLabel), strings.TrimSpace(nextLabel))
 }
 
 func validDistribution(value string) bool {

@@ -60,7 +60,10 @@ type UpdateRequest struct {
 	Segments           *[]SegmentRequest `json:"segments"`
 }
 
-type SegmentResponse SegmentRequest
+type SegmentResponse struct {
+	ID uuid.UUID `json:"id"`
+	SegmentRequest
+}
 type FlightResponse struct {
 	ID                 uuid.UUID         `json:"id"`
 	PlanningID         uuid.UUID         `json:"planning_id"`
@@ -95,7 +98,7 @@ func toSegments(input []SegmentRequest) []Segment {
 func toResponse(flight Flight) FlightResponse {
 	segments := make([]SegmentResponse, len(flight.Segments))
 	for i, item := range flight.Segments {
-		segments[i] = SegmentResponse{Direction: item.Direction, Position: item.Position, OriginLabel: item.OriginLabel, OriginCity: item.OriginCity, OriginAirportName: item.OriginAirportName, OriginAirportCode: item.OriginAirportCode, OriginMapboxID: item.OriginMapboxID, DestinationLabel: item.DestinationLabel, DestinationCity: item.DestinationCity, DestinationAirportName: item.DestinationAirportName, DestinationAirportCode: item.DestinationAirportCode, DestinationMapboxID: item.DestinationMapboxID, DepartureAt: item.DepartureAt, ArrivalAt: item.ArrivalAt, DepartureTerminal: item.DepartureTerminal, ArrivalTerminal: item.ArrivalTerminal, Airline: item.Airline, FlightNumber: item.FlightNumber, OriginTimezone: item.OriginTimezone, DestinationTimezone: item.DestinationTimezone}
+		segments[i] = SegmentResponse{ID: item.ID, SegmentRequest: SegmentRequest{Direction: item.Direction, Position: item.Position, OriginLabel: item.OriginLabel, OriginCity: item.OriginCity, OriginAirportName: item.OriginAirportName, OriginAirportCode: item.OriginAirportCode, OriginMapboxID: item.OriginMapboxID, DestinationLabel: item.DestinationLabel, DestinationCity: item.DestinationCity, DestinationAirportName: item.DestinationAirportName, DestinationAirportCode: item.DestinationAirportCode, DestinationMapboxID: item.DestinationMapboxID, DepartureAt: item.DepartureAt, ArrivalAt: item.ArrivalAt, DepartureTerminal: item.DepartureTerminal, ArrivalTerminal: item.ArrivalTerminal, Airline: item.Airline, FlightNumber: item.FlightNumber, OriginTimezone: item.OriginTimezone, DestinationTimezone: item.DestinationTimezone}}
 	}
 	return FlightResponse{ID: flight.ID, PlanningID: flight.PlanningID, CreatedByUserID: flight.CreatedByUserID, Status: flight.Status, Airline: flight.Airline, FlightNumber: flight.FlightNumber, ReservationCode: flight.ReservationCode, Notes: flight.Notes, OfferURL: flight.OfferURL, CabinClass: flight.CabinClass, Baggage: flight.Baggage, CostCents: flight.CostCents, Currency: flight.Currency, CostDistribution: flight.CostDistribution, ParticipantUserIDs: flight.ParticipantUserIDs, Segments: segments, CreatedAt: flight.CreatedAt, UpdatedAt: flight.UpdatedAt}
 }

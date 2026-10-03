@@ -21,6 +21,22 @@ func TestValidateSegmentsRequiresChronologicalPositions(t *testing.T) {
 	}
 }
 
+func TestValidateSegmentsRequiresConnectedStops(t *testing.T) {
+	base := time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC)
+	segments := []Segment{
+		{Direction: DirectionOutbound, Position: 1, OriginLabel: "LHR", DestinationLabel: "NRT", DepartureAt: base.Add(3 * time.Hour), ArrivalAt: base.Add(15 * time.Hour)},
+		{Direction: DirectionOutbound, Position: 0, OriginLabel: "MAD", DestinationLabel: "CDG", DepartureAt: base, ArrivalAt: base.Add(2 * time.Hour)},
+	}
+	if err := validateSegments(segments); err == nil {
+		t.Fatal("expected disconnected segments to be rejected")
+	}
+
+	segments[1].DestinationLabel = "LHR"
+	if err := validateSegments(segments); err != nil {
+		t.Fatalf("expected connected segments in any input order to be valid, got %v", err)
+	}
+}
+
 func TestValidateInputRejectsInvalidMoneyAndDistribution(t *testing.T) {
 	base := time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC)
 	err := validateInput(CreateInput{
