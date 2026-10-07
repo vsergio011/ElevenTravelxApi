@@ -7,6 +7,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/bookings"
 	"github.com/eleventravel/eleventravel-api/internal/checklists"
 	"github.com/eleventravel/eleventravel-api/internal/config"
+	"github.com/eleventravel/eleventravel-api/internal/expenses"
 	"github.com/eleventravel/eleventravel-api/internal/flights"
 	apihttp "github.com/eleventravel/eleventravel-api/internal/http"
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
@@ -48,9 +49,12 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	checklistRepository := checklists.NewPostgresRepository(pool)
 	checklistService := checklists.NewService(checklistRepository, planningRepository)
 	checklistHandler := checklists.NewHandler(checklistService)
+	expenseRepository := expenses.NewPostgresRepository(pool)
+	expenseService := expenses.NewService(expenseRepository, planningRepository, bookingService, flightService)
+	expenseHandler := expenses.NewHandler(expenseService)
 
 	return &Application{
-		Handler: apihttp.NewRouter(tokenValidator, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, cfg.CORSAllowedOrigins),
+		Handler: apihttp.NewRouter(tokenValidator, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, cfg.CORSAllowedOrigins),
 		Close:   pool.Close,
 	}, nil
 }

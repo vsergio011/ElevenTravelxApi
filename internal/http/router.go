@@ -7,6 +7,7 @@ import (
 
 	"github.com/eleventravel/eleventravel-api/internal/bookings"
 	"github.com/eleventravel/eleventravel-api/internal/checklists"
+	"github.com/eleventravel/eleventravel-api/internal/expenses"
 	"github.com/eleventravel/eleventravel-api/internal/flights"
 	"github.com/eleventravel/eleventravel-api/internal/http/middleware"
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
@@ -15,7 +16,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/users"
 )
 
-func NewRouter(tokenValidator supabasejwt.TokenValidator, planningHandler *plannings.Handler, userHandler *users.Handler, bookingHandler *bookings.Handler, flightHandler *flights.Handler, checklistHandler *checklists.Handler, allowedOrigins []string) stdhttp.Handler {
+func NewRouter(tokenValidator supabasejwt.TokenValidator, planningHandler *plannings.Handler, userHandler *users.Handler, bookingHandler *bookings.Handler, flightHandler *flights.Handler, checklistHandler *checklists.Handler, expenseHandler *expenses.Handler, allowedOrigins []string) stdhttp.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(middleware.Logging)
@@ -32,6 +33,7 @@ func NewRouter(tokenValidator supabasejwt.TokenValidator, planningHandler *plann
 		bookingHandler.RegisterRoutes(api)
 		flightHandler.RegisterRoutes(api)
 		checklistHandler.RegisterRoutes(api)
+		expenseHandler.RegisterRoutes(api)
 	})
 
 	return router
