@@ -43,17 +43,19 @@ type Segment struct {
 }
 
 type Flight struct {
-	ID                 uuid.UUID
-	PlanningID         uuid.UUID
-	CreatedByUserID    uuid.UUID
-	Status             string
-	Airline            *string
-	FlightNumber       *string
-	ReservationCode    *string
-	Notes              *string
-	OfferURL           *string
-	CabinClass         *string
-	Baggage            *string
+	ID              uuid.UUID
+	PlanningID      uuid.UUID
+	CreatedByUserID uuid.UUID
+	Status          string
+	Airline         *string
+	FlightNumber    *string
+	ReservationCode *string
+	Notes           *string
+	OfferURL        *string
+	CabinClass      *string
+	Baggage         *string
+	PlanningItemID  uuid.UUID
+	// Cost fields mirror the primary expense linked to the planning item; flights do not store them.
 	CostCents          int64
 	Currency           string
 	CostDistribution   string

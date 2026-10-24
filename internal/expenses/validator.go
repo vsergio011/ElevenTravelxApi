@@ -12,7 +12,47 @@ import (
 const maxAmountCents = 100_000_000_00
 
 func isValidDistribution(value string) bool {
-	return value == DistributionGroup || value == DistributionSelectedParticipants
+	return value == DistributionGroup || value == DistributionSelectedParticipants ||
+		value == DistributionIndividual || value == DistributionCustom
+}
+
+func isValidCurrency(value string) bool {
+	return value == "EUR" || value == "USD"
+}
+
+func parsePayments(raw []PaymentRequest) ([]Payment, []response.ErrorDetail) {
+	payments := make([]Payment, 0, len(raw))
+	for _, item := range raw {
+		id, err := uuid.Parse(strings.TrimSpace(item.UserID))
+		if err != nil {
+			return nil, []response.ErrorDetail{{Field: "payments", Message: "payments must contain valid user_id UUIDs"}}
+		}
+		if item.AmountCents <= 0 || item.AmountCents > maxAmountCents {
+			return nil, []response.ErrorDetail{{Field: "payments", Message: "payment amount_cents must be a positive amount"}}
+		}
+		payment := Payment{UserID: id, AmountCents: item.AmountCents}
+		paidAt, detail := parseOptionalTime(item.PaidAt)
+		if detail != nil {
+			return nil, []response.ErrorDetail{{Field: "payments", Message: "paid_at must be an RFC3339 datetime"}}
+		}
+		if paidAt != nil {
+			payment.PaidAt = *paidAt
+		}
+		payments = append(payments, payment)
+	}
+	return payments, nil
+}
+
+func parseShares(raw []ShareRequest) ([]Share, []response.ErrorDetail) {
+	shares := make([]Share, 0, len(raw))
+	for _, item := range raw {
+		id, err := uuid.Parse(strings.TrimSpace(item.UserID))
+		if err != nil || item.AmountCents < 0 {
+			return nil, []response.ErrorDetail{{Field: "shares", Message: "shares must contain valid user_id and non-negative amount_cents"}}
+		}
+		shares = append(shares, Share{UserID: id, Cents: item.AmountCents})
+	}
+	return shares, nil
 }
 
 func parseUserIDs(raw []string) ([]uuid.UUID, []response.ErrorDetail) {
@@ -78,16 +118,36 @@ func parsePayer(raw string, details *[]response.ErrorDetail) uuid.UUID {
 
 func validateCreateRequest(request CreateExpenseRequest) (CreateExpenseInput, error) {
 	details := []response.ErrorDetail{}
-	input := CreateExpenseInput{Distribution: strings.TrimSpace(request.Distribution)}
+	input := CreateExpenseInput{Distribution: strings.TrimSpace(request.Distribution), Currency: strings.ToUpper(strings.TrimSpace(request.Currency))}
 	if input.Distribution == "" {
 		input.Distribution = DistributionGroup
+	}
+	if input.Currency == "" {
+		input.Currency = "EUR"
+	}
+	if !isValidCurrency(input.Currency) {
+		details = append(details, response.ErrorDetail{Field: "currency", Message: "currency must be EUR or USD"})
 	}
 	input.Title = validateTitle(request.Title, &details)
 	validateAmount(request.AmountCents, &details)
 	input.AmountCents = request.AmountCents
-	input.PaidByUserID = parsePayer(request.PaidByUserID, &details)
+	if request.PlanningItemID != nil && strings.TrimSpace(*request.PlanningItemID) != "" {
+		itemID, err := uuid.Parse(strings.TrimSpace(*request.PlanningItemID))
+		if err != nil {
+			details = append(details, response.ErrorDetail{Field: "planning_item_id", Message: "planning_item_id must be a valid UUID"})
+		} else {
+			input.PlanningItemID = &itemID
+		}
+	}
+	payments, paymentDetails := parsePayments(request.Payments)
+	details = append(details, paymentDetails...)
+	input.Payments = payments
+	if len(request.Payments) == 0 && strings.TrimSpace(request.PaidByUserID) != "" {
+		payer := parsePayer(request.PaidByUserID, &details)
+		input.Payments = []Payment{{UserID: payer, AmountCents: request.AmountCents}}
+	}
 	if !isValidDistribution(input.Distribution) {
-		details = append(details, response.ErrorDetail{Field: "distribution", Message: "distribution must be group or selected_participants"})
+		details = append(details, response.ErrorDetail{Field: "distribution", Message: "distribution must be group, selected_participants, individual or custom"})
 	}
 	participants, participantDetails := parseUserIDs(request.ParticipantUserIDs)
 	details = append(details, participantDetails...)
@@ -97,6 +157,12 @@ func validateCreateRequest(request CreateExpenseRequest) (CreateExpenseInput, er
 	}
 	if input.Distribution == DistributionGroup {
 		input.ParticipantUserIDs = []uuid.UUID{}
+	}
+	shares, shareDetails := parseShares(request.Shares)
+	details = append(details, shareDetails...)
+	input.CustomShares = shares
+	if input.Distribution == DistributionCustom && len(shares) == 0 && len(shareDetails) == 0 {
+		details = append(details, response.ErrorDetail{Field: "shares", Message: "custom distribution requires shares"})
 	}
 	input.Category = cleanOptional(request.Category, 60, "category", &details)
 	input.Notes = cleanOptional(request.Notes, 1000, "notes", &details)
@@ -122,14 +188,31 @@ func validateUpdateRequest(request UpdateExpenseRequest) (UpdateExpenseInput, er
 		validateAmount(*request.AmountCents, &details)
 		input.AmountCents = request.AmountCents
 	}
-	if request.PaidByUserID != nil {
+	if request.Currency != nil {
+		currency := strings.ToUpper(strings.TrimSpace(*request.Currency))
+		if !isValidCurrency(currency) {
+			details = append(details, response.ErrorDetail{Field: "currency", Message: "currency must be EUR or USD"})
+		}
+		input.Currency = &currency
+	}
+	if request.Payments != nil {
+		payments, paymentDetails := parsePayments(*request.Payments)
+		details = append(details, paymentDetails...)
+		input.Payments = &payments
+	} else if request.PaidByUserID != nil && request.AmountCents != nil {
 		payer := parsePayer(*request.PaidByUserID, &details)
-		input.PaidByUserID = &payer
+		payments := []Payment{{UserID: payer, AmountCents: *request.AmountCents}}
+		input.Payments = &payments
+	}
+	if request.Shares != nil {
+		shares, shareDetails := parseShares(*request.Shares)
+		details = append(details, shareDetails...)
+		input.CustomShares = &shares
 	}
 	if request.Distribution != nil {
 		distribution := strings.TrimSpace(*request.Distribution)
 		if !isValidDistribution(distribution) {
-			details = append(details, response.ErrorDetail{Field: "distribution", Message: "distribution must be group or selected_participants"})
+			details = append(details, response.ErrorDetail{Field: "distribution", Message: "distribution must be group, selected_participants, individual or custom"})
 		}
 		input.Distribution = &distribution
 	}

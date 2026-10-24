@@ -1,43 +1,78 @@
 package expenses
 
-import "time"
+import (
+	"time"
 
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
+)
+
+type PaymentRequest struct {
+	UserID      string  `json:"user_id"`
+	AmountCents int64   `json:"amount_cents"`
+	PaidAt      *string `json:"paid_at"`
+}
+
+type ShareRequest struct {
+	UserID      string `json:"user_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+// PaidByUserID is a shorthand for one payment covering the full amount; Payments takes precedence.
 type CreateExpenseRequest struct {
-	Title              string   `json:"title"`
-	AmountCents        int64    `json:"amount_cents"`
-	PaidByUserID       string   `json:"paid_by_user_id"`
-	Distribution       string   `json:"distribution"`
-	ParticipantUserIDs []string `json:"participant_user_ids"`
-	Category           *string  `json:"category"`
-	Notes              *string  `json:"notes"`
-	SpentAt            *string  `json:"spent_at"`
+	Title              string           `json:"title"`
+	AmountCents        int64            `json:"amount_cents"`
+	Currency           string           `json:"currency"`
+	PlanningItemID     *string          `json:"planning_item_id"`
+	PaidByUserID       string           `json:"paid_by_user_id"`
+	Payments           []PaymentRequest `json:"payments"`
+	Distribution       string           `json:"distribution"`
+	ParticipantUserIDs []string         `json:"participant_user_ids"`
+	Shares             []ShareRequest   `json:"shares"`
+	Category           *string          `json:"category"`
+	Notes              *string          `json:"notes"`
+	SpentAt            *string          `json:"spent_at"`
 }
 
 type UpdateExpenseRequest struct {
-	Title              *string   `json:"title"`
-	AmountCents        *int64    `json:"amount_cents"`
-	PaidByUserID       *string   `json:"paid_by_user_id"`
-	Distribution       *string   `json:"distribution"`
-	ParticipantUserIDs *[]string `json:"participant_user_ids"`
-	Category           *string   `json:"category"`
-	Notes              *string   `json:"notes"`
-	SpentAt            *string   `json:"spent_at"`
+	Title              *string           `json:"title"`
+	AmountCents        *int64            `json:"amount_cents"`
+	Currency           *string           `json:"currency"`
+	PaidByUserID       *string           `json:"paid_by_user_id"`
+	Payments           *[]PaymentRequest `json:"payments"`
+	Distribution       *string           `json:"distribution"`
+	ParticipantUserIDs *[]string         `json:"participant_user_ids"`
+	Shares             *[]ShareRequest   `json:"shares"`
+	Category           *string           `json:"category"`
+	Notes              *string           `json:"notes"`
+	SpentAt            *string           `json:"spent_at"`
+}
+
+type PaymentResponse struct {
+	UserID      string    `json:"user_id"`
+	AmountCents int64     `json:"amount_cents"`
+	PaidAt      time.Time `json:"paid_at"`
 }
 
 type ExpenseResponse struct {
-	ID                 string    `json:"id"`
-	PlanningID         string    `json:"planning_id"`
-	CreatedByUserID    string    `json:"created_by_user_id"`
-	PaidByUserID       string    `json:"paid_by_user_id"`
-	Title              string    `json:"title"`
-	AmountCents        int64     `json:"amount_cents"`
-	Distribution       string    `json:"distribution"`
-	ParticipantUserIDs []string  `json:"participant_user_ids"`
-	Category           *string   `json:"category"`
-	Notes              *string   `json:"notes"`
-	SpentAt            time.Time `json:"spent_at"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                 string            `json:"id"`
+	PlanningID         string            `json:"planning_id"`
+	PlanningItemID     *string           `json:"planning_item_id"`
+	ItemType           *string           `json:"item_type"`
+	CreatedByUserID    string            `json:"created_by_user_id"`
+	Title              string            `json:"title"`
+	AmountCents        int64             `json:"amount_cents"`
+	Currency           string            `json:"currency"`
+	Distribution       string            `json:"distribution"`
+	ParticipantUserIDs []string          `json:"participant_user_ids"`
+	Shares             []ShareResponse   `json:"shares"`
+	Payments           []PaymentResponse `json:"payments"`
+	PaymentStatus      string            `json:"payment_status"`
+	Status             string            `json:"status"`
+	Category           *string           `json:"category"`
+	Notes              *string           `json:"notes"`
+	SpentAt            time.Time         `json:"spent_at"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
 func NewExpenseResponse(expense Expense) ExpenseResponse {
@@ -45,15 +80,34 @@ func NewExpenseResponse(expense Expense) ExpenseResponse {
 	for _, id := range expense.ParticipantUserIDs {
 		participants = append(participants, id.String())
 	}
+	payments := make([]PaymentResponse, 0, len(expense.Payments))
+	for _, payment := range expense.Payments {
+		payments = append(payments, PaymentResponse{UserID: payment.UserID.String(), AmountCents: payment.AmountCents, PaidAt: payment.PaidAt})
+	}
+	var itemID *string
+	if expense.PlanningItemID != nil {
+		value := expense.PlanningItemID.String()
+		itemID = &value
+	}
+	status := ItemConfirmed
+	if expense.ItemStatus != nil && *expense.ItemStatus != "confirmed" {
+		status = ItemPending
+	}
 	return ExpenseResponse{
 		ID:                 expense.ID.String(),
 		PlanningID:         expense.PlanningID.String(),
+		PlanningItemID:     itemID,
+		ItemType:           expense.ItemType,
 		CreatedByUserID:    expense.CreatedByUserID.String(),
-		PaidByUserID:       expense.PaidByUserID.String(),
 		Title:              expense.Title,
 		AmountCents:        expense.AmountCents,
+		Currency:           expense.Currency,
 		Distribution:       expense.Distribution,
 		ParticipantUserIDs: participants,
+		Shares:             newShareResponses(expense.Shares),
+		Payments:           payments,
+		PaymentStatus:      expenseledger.PaymentStatus(expense.AmountCents, expense.Payments),
+		Status:             status,
 		Category:           expense.Category,
 		Notes:              expense.Notes,
 		SpentAt:            expense.SpentAt,
@@ -68,17 +122,19 @@ type ShareResponse struct {
 }
 
 type BudgetItemResponse struct {
-	ID           string          `json:"id"`
-	Source       string          `json:"source"`
-	SourceID     string          `json:"source_id"`
-	Title        string          `json:"title"`
-	Subtitle     *string         `json:"subtitle"`
-	Status       string          `json:"status"`
-	AmountCents  int64           `json:"amount_cents"`
-	Distribution string          `json:"distribution"`
-	Payers       []ShareResponse `json:"payers"`
-	Shares       []ShareResponse `json:"shares"`
-	Date         time.Time       `json:"date"`
+	ID            string          `json:"id"`
+	Source        string          `json:"source"`
+	SourceID      string          `json:"source_id"`
+	Title         string          `json:"title"`
+	Subtitle      *string         `json:"subtitle"`
+	Status        string          `json:"status"`
+	AmountCents   int64           `json:"amount_cents"`
+	Currency      string          `json:"currency"`
+	Distribution  string          `json:"distribution"`
+	Payers        []ShareResponse `json:"payers"`
+	Shares        []ShareResponse `json:"shares"`
+	PaymentStatus string          `json:"payment_status"`
+	Date          time.Time       `json:"date"`
 }
 
 type BudgetTotalsResponse struct {
@@ -128,8 +184,8 @@ func NewBudgetResponse(budget Budget) BudgetResponse {
 		items = append(items, BudgetItemResponse{
 			ID: item.ID, Source: item.Source, SourceID: item.SourceID.String(), Title: item.Title,
 			Subtitle: item.Subtitle, Status: item.Status, AmountCents: item.AmountCents,
-			Distribution: item.Distribution, Payers: newShareResponses(item.Payers),
-			Shares: newShareResponses(item.Shares), Date: item.Date,
+			Currency: item.Currency, Distribution: item.Distribution, Payers: newShareResponses(item.Payers),
+			Shares: newShareResponses(item.Shares), PaymentStatus: item.PaymentStatus, Date: item.Date,
 		})
 	}
 	members := make([]MemberBalanceResponse, 0, len(budget.Members))

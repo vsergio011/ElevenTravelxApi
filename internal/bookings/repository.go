@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 )
 
 type Repository interface {
@@ -27,49 +29,109 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
+// Cost, distribution and payments are not stored on bookings: they live in the expense linked
+// through planning_item_id and are overlaid on read (see applyCosts).
+const bookingColumns = `id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, route_stop_id, planning_item_id, created_at, updated_at`
+
+type queryer = expenseledger.Querier
+
 func (r *PostgresRepository) CreateBooking(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input CreateBookingInput) (Booking, error) {
-	booking, err := scanBooking(r.pool.QueryRow(ctx, `
-		INSERT INTO public.bookings (
-			id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, cost_cents, cost_distribution, route_stop_id
-		)
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, (SELECT id FROM public.planning_route_stops WHERE id = $12 AND planning_id = $1))
-		RETURNING id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, cost_cents, cost_distribution, route_stop_id, created_at, updated_at
-	`, planningID, actorUserID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.Location, input.Notes, input.CostCents, input.CostDistribution, input.RouteStopID))
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return Booking{}, err
 	}
+	defer tx.Rollback(ctx)
 
-	if err := r.replaceParticipants(ctx, booking.ID, input.ParticipantUserIDs); err != nil {
+	booking, err := scanBooking(tx.QueryRow(ctx, `
+		INSERT INTO public.bookings (
+			id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, route_stop_id
+		)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT id FROM public.planning_route_stops WHERE id = $10 AND planning_id = $1))
+		RETURNING `+bookingColumns,
+		planningID, actorUserID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.Location, input.Notes, input.RouteStopID))
+	if err != nil {
+		return Booking{}, err
+	}
+	if err := replaceParticipants(ctx, tx, booking.ID, input.ParticipantUserIDs); err != nil {
 		return Booking{}, err
 	}
 	booking.ParticipantUserIDs = input.ParticipantUserIDs
-	if err := r.replacePayments(ctx, booking.ID, input.Payments); err != nil {
+	payments := input.Payments
+	if err := syncExpense(ctx, tx, booking, actorUserID, &input.CostCents, &input.CostDistribution, &payments); err != nil {
 		return Booking{}, err
 	}
-	booking.Payments = input.Payments
+	if err := applyCosts(ctx, tx, []*Booking{&booking}); err != nil {
+		return Booking{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Booking{}, err
+	}
 	return booking, nil
 }
 
+// syncExpense pushes the booking cost into the shared expense model. Payments are explicit:
+// an empty list means nobody has paid the provider yet.
+func syncExpense(ctx context.Context, q queryer, booking Booking, actor uuid.UUID, cost *int64, distribution *string, payments *[]Payment) error {
+	spentAt := booking.CreatedAt
+	if booking.OccursAt != nil {
+		spentAt = *booking.OccursAt
+	}
+	sync := expenseledger.ItemSync{
+		PlanningID: booking.PlanningID, PlanningItemID: booking.PlanningItemID, ActorUserID: actor,
+		Title: booking.Title, Category: booking.Type, SpentAt: spentAt,
+		AmountCents: cost, Distribution: distribution, ParticipantUserIDs: booking.ParticipantUserIDs,
+	}
+	if payments != nil {
+		list := make([]expenseledger.Payment, 0, len(*payments))
+		for _, payment := range *payments {
+			list = append(list, expenseledger.Payment{UserID: payment.UserID, AmountCents: payment.AmountCents, PaidAt: payment.PaidAt})
+		}
+		sync.Payments = &list
+	}
+	return expenseledger.SyncItemExpense(ctx, q, sync)
+}
+
+// applyCosts fills cost, distribution and payments of each booking from its linked expense.
+func applyCosts(ctx context.Context, q queryer, bookings []*Booking) error {
+	ids := make([]uuid.UUID, 0, len(bookings))
+	for _, booking := range bookings {
+		ids = append(ids, booking.PlanningItemID)
+	}
+	costs, err := expenseledger.LoadItemCosts(ctx, q, ids)
+	if err != nil {
+		return err
+	}
+	for _, booking := range bookings {
+		booking.CostCents, booking.CostDistribution, booking.Payments = 0, DistributionGroup, []Payment{}
+		cost, ok := costs[booking.PlanningItemID]
+		if !ok {
+			continue
+		}
+		booking.CostCents, booking.CostDistribution = cost.AmountCents, cost.Distribution
+		for _, payment := range cost.Payments {
+			booking.Payments = append(booking.Payments, Payment{ID: payment.ID, UserID: payment.UserID, AmountCents: payment.AmountCents, PaidAt: payment.PaidAt})
+		}
+	}
+	return nil
+}
+
 func (r *PostgresRepository) GetBookingByID(ctx context.Context, planningID uuid.UUID, bookingID uuid.UUID) (Booking, error) {
-	booking, err := scanBooking(r.pool.QueryRow(ctx, `
-		SELECT id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, cost_cents, cost_distribution, route_stop_id, created_at, updated_at
-		FROM public.bookings
-		WHERE id = $1 AND planning_id = $2
-	`, bookingID, planningID))
+	return r.getBooking(ctx, r.pool, planningID, bookingID)
+}
+
+func (r *PostgresRepository) getBooking(ctx context.Context, q queryer, planningID uuid.UUID, bookingID uuid.UUID) (Booking, error) {
+	booking, err := scanBooking(q.QueryRow(ctx, `SELECT `+bookingColumns+` FROM public.bookings WHERE id = $1 AND planning_id = $2`, bookingID, planningID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Booking{}, ErrBookingNotFound
 		}
-
 		return Booking{}, err
 	}
-
-	booking.ParticipantUserIDs, err = r.listParticipants(ctx, booking.ID)
+	booking.ParticipantUserIDs, err = listParticipants(ctx, q, booking.ID)
 	if err != nil {
 		return Booking{}, err
 	}
-	booking.Payments, err = r.listPayments(ctx, booking.ID)
-	if err != nil {
+	if err := applyCosts(ctx, q, []*Booking{&booking}); err != nil {
 		return Booking{}, err
 	}
 	return booking, nil
@@ -77,11 +139,7 @@ func (r *PostgresRepository) GetBookingByID(ctx context.Context, planningID uuid
 
 func (r *PostgresRepository) ListBookings(ctx context.Context, planningID uuid.UUID, filters BookingFilters) (PageResult[Booking], error) {
 	countQuery := `SELECT count(*) FROM public.bookings WHERE planning_id = $1`
-	listQuery := `
-		SELECT id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, cost_cents, cost_distribution, route_stop_id, created_at, updated_at
-		FROM public.bookings
-		WHERE planning_id = $1
-	`
+	listQuery := `SELECT ` + bookingColumns + ` FROM public.bookings WHERE planning_id = $1`
 
 	args := []any{planningID}
 	argIndex := 2
@@ -130,25 +188,32 @@ func (r *PostgresRepository) ListBookings(ctx context.Context, planningID uuid.U
 	if rows.Err() != nil {
 		return PageResult[Booking]{}, rows.Err()
 	}
+	rows.Close()
 
 	participants, err := r.listParticipantsForBookings(ctx, bookingIDs)
 	if err != nil {
 		return PageResult[Booking]{}, err
 	}
-	payments, err := r.listPaymentsForBookings(ctx, bookingIDs)
-	if err != nil {
-		return PageResult[Booking]{}, err
-	}
+	pointers := make([]*Booking, 0, len(bookings))
 	for index := range bookings {
 		bookings[index].ParticipantUserIDs = participants[bookings[index].ID]
-		bookings[index].Payments = payments[bookings[index].ID]
+		pointers = append(pointers, &bookings[index])
+	}
+	if err := applyCosts(ctx, r.pool, pointers); err != nil {
+		return PageResult[Booking]{}, err
 	}
 
 	return newPageResult(bookings, page, total), nil
 }
 
 func (r *PostgresRepository) UpdateBooking(ctx context.Context, planningID uuid.UUID, bookingID uuid.UUID, input UpdateBookingInput) (Booking, error) {
-	booking, err := scanBooking(r.pool.QueryRow(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Booking{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	booking, err := scanBooking(tx.QueryRow(ctx, `
 		UPDATE public.bookings
 		SET
 			title = COALESCE($3, title),
@@ -159,83 +224,58 @@ func (r *PostgresRepository) UpdateBooking(ctx context.Context, planningID uuid.
 			location = COALESCE($8, location),
 			notes = COALESCE($9, notes),
 			updated_at = now(),
-			cost_cents = COALESCE($10, cost_cents),
-			cost_distribution = COALESCE($11, cost_distribution),
-			route_stop_id = CASE WHEN $12::uuid IS NULL THEN NULL ELSE (SELECT id FROM public.planning_route_stops WHERE id = $12::uuid AND planning_id = $2) END
+			route_stop_id = CASE WHEN $10::uuid IS NULL THEN NULL ELSE (SELECT id FROM public.planning_route_stops WHERE id = $10::uuid AND planning_id = $2) END
 		WHERE id = $1 AND planning_id = $2
-			RETURNING id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, cost_cents, cost_distribution, route_stop_id, created_at, updated_at
-	`, bookingID, planningID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.Location, input.Notes, input.CostCents, input.CostDistribution, input.RouteStopID))
+		RETURNING `+bookingColumns,
+		bookingID, planningID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.Location, input.Notes, input.RouteStopID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Booking{}, ErrBookingNotFound
 		}
-
 		return Booking{}, err
 	}
 
 	if input.ParticipantUserIDs != nil {
-		if err := r.replaceParticipants(ctx, booking.ID, *input.ParticipantUserIDs); err != nil {
-			return Booking{}, err
-		}
-		booking.ParticipantUserIDs = *input.ParticipantUserIDs
-	} else {
-		booking.ParticipantUserIDs, err = r.listParticipants(ctx, booking.ID)
-		if err != nil {
+		if err := replaceParticipants(ctx, tx, booking.ID, *input.ParticipantUserIDs); err != nil {
 			return Booking{}, err
 		}
 	}
-	if input.Payments != nil {
-		if err := r.replacePayments(ctx, booking.ID, *input.Payments); err != nil {
-			return Booking{}, err
-		}
-		booking.Payments = *input.Payments
-	} else {
-		booking.Payments, err = r.listPayments(ctx, booking.ID)
-		if err != nil {
-			return Booking{}, err
-		}
+	booking.ParticipantUserIDs, err = listParticipants(ctx, tx, booking.ID)
+	if err != nil {
+		return Booking{}, err
+	}
+	if err := syncExpense(ctx, tx, booking, booking.CreatedByUserID, input.CostCents, input.CostDistribution, input.Payments); err != nil {
+		return Booking{}, err
+	}
+	if err := applyCosts(ctx, tx, []*Booking{&booking}); err != nil {
+		return Booking{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Booking{}, err
 	}
 	return booking, nil
 }
 
 func (r *PostgresRepository) ConfirmBooking(ctx context.Context, planningID uuid.UUID, bookingID uuid.UUID) (Booking, error) {
-	booking, err := scanBooking(r.pool.QueryRow(ctx, `
-		UPDATE public.bookings
-		SET status = $3, updated_at = now()
-		WHERE id = $1 AND planning_id = $2
-		RETURNING id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, cost_cents, cost_distribution, route_stop_id, created_at, updated_at
-	`, bookingID, planningID, StatusConfirmed))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Booking{}, ErrBookingNotFound
-		}
-
-		return Booking{}, err
-	}
-	booking.ParticipantUserIDs, err = r.listParticipants(ctx, booking.ID)
+	tag, err := r.pool.Exec(ctx, `UPDATE public.bookings SET status = $3, updated_at = now() WHERE id = $1 AND planning_id = $2`, bookingID, planningID, StatusConfirmed)
 	if err != nil {
 		return Booking{}, err
 	}
-	booking.Payments, err = r.listPayments(ctx, booking.ID)
-	if err != nil {
-		return Booking{}, err
+	if tag.RowsAffected() == 0 {
+		return Booking{}, ErrBookingNotFound
 	}
-	return booking, nil
+	return r.GetBookingByID(ctx, planningID, bookingID)
 }
 
+// DeleteBooking relies on a trigger that removes the planning item and, by cascade, its expenses.
 func (r *PostgresRepository) DeleteBooking(ctx context.Context, planningID uuid.UUID, bookingID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM public.bookings
-		WHERE id = $1 AND planning_id = $2
-	`, bookingID, planningID)
+	tag, err := r.pool.Exec(ctx, `DELETE FROM public.bookings WHERE id = $1 AND planning_id = $2`, bookingID, planningID)
 	if err != nil {
 		return err
 	}
-
 	if tag.RowsAffected() == 0 {
 		return ErrBookingNotFound
 	}
-
 	return nil
 }
 
@@ -256,38 +296,28 @@ func scanBooking(scanner bookingScanner) (Booking, error) {
 		&booking.OccursAt,
 		&booking.Location,
 		&booking.Notes,
-		&booking.CostCents,
-		&booking.CostDistribution,
 		&booking.RouteStopID,
+		&booking.PlanningItemID,
 		&booking.CreatedAt,
 		&booking.UpdatedAt,
 	)
 	return booking, err
 }
 
-func (r *PostgresRepository) replaceParticipants(ctx context.Context, bookingID uuid.UUID, userIDs []uuid.UUID) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
+func replaceParticipants(ctx context.Context, q queryer, bookingID uuid.UUID, userIDs []uuid.UUID) error {
+	if _, err := q.Exec(ctx, `DELETE FROM public.booking_participants WHERE booking_id = $1`, bookingID); err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, `DELETE FROM public.booking_participants WHERE booking_id = $1`, bookingID); err != nil {
-		return err
-	}
-	batch := &pgx.Batch{}
 	for _, userID := range userIDs {
-		batch.Queue(`INSERT INTO public.booking_participants (booking_id, user_id) VALUES ($1, $2)`, bookingID, userID)
+		if _, err := q.Exec(ctx, `INSERT INTO public.booking_participants (booking_id, user_id) VALUES ($1, $2)`, bookingID, userID); err != nil {
+			return err
+		}
 	}
-	results := tx.SendBatch(ctx, batch)
-	if err := results.Close(); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return nil
 }
 
-func (r *PostgresRepository) listParticipants(ctx context.Context, bookingID uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := r.pool.Query(ctx, `SELECT user_id FROM public.booking_participants WHERE booking_id = $1 ORDER BY user_id`, bookingID)
+func listParticipants(ctx context.Context, q queryer, bookingID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.Query(ctx, `SELECT user_id FROM public.booking_participants WHERE booking_id = $1 ORDER BY user_id`, bookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -299,44 +329,6 @@ func (r *PostgresRepository) listParticipants(ctx context.Context, bookingID uui
 			return nil, err
 		}
 		result = append(result, userID)
-	}
-	return result, rows.Err()
-}
-
-func (r *PostgresRepository) replacePayments(ctx context.Context, bookingID uuid.UUID, payments []Payment) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, `DELETE FROM public.booking_payments WHERE booking_id = $1`, bookingID); err != nil {
-		return err
-	}
-	batch := &pgx.Batch{}
-	for _, payment := range payments {
-		batch.Queue(`INSERT INTO public.booking_payments (booking_id, user_id, amount_cents, paid_at) VALUES ($1, $2, $3, $4)`, bookingID, payment.UserID, payment.AmountCents, payment.PaidAt)
-	}
-	results := tx.SendBatch(ctx, batch)
-	if err := results.Close(); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-func (r *PostgresRepository) listPayments(ctx context.Context, bookingID uuid.UUID) ([]Payment, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id, user_id, amount_cents, paid_at FROM public.booking_payments WHERE booking_id = $1 ORDER BY paid_at, id`, bookingID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make([]Payment, 0)
-	for rows.Next() {
-		var payment Payment
-		if err := rows.Scan(&payment.ID, &payment.UserID, &payment.AmountCents, &payment.PaidAt); err != nil {
-			return nil, err
-		}
-		result = append(result, payment)
 	}
 	return result, rows.Err()
 }
@@ -357,27 +349,6 @@ func (r *PostgresRepository) listParticipantsForBookings(ctx context.Context, bo
 			return nil, err
 		}
 		result[bookingID] = append(result[bookingID], userID)
-	}
-	return result, rows.Err()
-}
-
-func (r *PostgresRepository) listPaymentsForBookings(ctx context.Context, bookingIDs []uuid.UUID) (map[uuid.UUID][]Payment, error) {
-	result := make(map[uuid.UUID][]Payment, len(bookingIDs))
-	if len(bookingIDs) == 0 {
-		return result, nil
-	}
-	rows, err := r.pool.Query(ctx, `SELECT id, booking_id, user_id, amount_cents, paid_at FROM public.booking_payments WHERE booking_id = ANY($1) ORDER BY booking_id, paid_at, id`, bookingIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var bookingID uuid.UUID
-		var payment Payment
-		if err := rows.Scan(&payment.ID, &bookingID, &payment.UserID, &payment.AmountCents, &payment.PaidAt); err != nil {
-			return nil, err
-		}
-		result[bookingID] = append(result[bookingID], payment)
 	}
 	return result, rows.Err()
 }

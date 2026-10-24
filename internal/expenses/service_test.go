@@ -36,7 +36,7 @@ type fakeRepository struct {
 }
 
 func (f *fakeRepository) Create(_ context.Context, planningID uuid.UUID, actor uuid.UUID, input CreateExpenseInput) (Expense, error) {
-	expense := Expense{ID: uuid.New(), PlanningID: planningID, CreatedByUserID: actor, PaidByUserID: input.PaidByUserID,
+	expense := Expense{ID: uuid.New(), PlanningID: planningID, CreatedByUserID: actor, Payments: input.Payments,
 		Title: input.Title, AmountCents: input.AmountCents, Distribution: input.Distribution,
 		ParticipantUserIDs: input.ParticipantUserIDs, SpentAt: time.Now()}
 	f.items[expense.ID] = expense
@@ -80,7 +80,55 @@ func setup() (*Service, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
 		owner:  {UserID: owner, PlanningID: planning, Role: plannings.RoleOwner},
 		member: {UserID: member, PlanningID: planning, Role: plannings.RoleMember},
 	}}
-	return NewService(&fakeRepository{items: map[uuid.UUID]Expense{}}, membership, nil, nil), planning, owner, member, outsider
+	return NewService(&fakeRepository{items: map[uuid.UUID]Expense{}}, membership), planning, owner, member, outsider
+}
+
+func TestBudgetSplitsMultiplePayersWithoutDoubleCounting(t *testing.T) {
+	service, planning, owner, member, _ := setup()
+	_, err := service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
+		Title: "Hotel", AmountCents: 1000, Distribution: DistributionGroup,
+		Payments: []Payment{{UserID: owner, AmountCents: 700}, {UserID: member, AmountCents: 300}}})
+	require.NoError(t, err)
+
+	budget, err := service.GetBudget(context.Background(), owner, planning)
+	require.NoError(t, err)
+	require.Len(t, budget.Items, 1)
+	require.Equal(t, int64(1000), budget.Totals.TotalCents)
+	balances := map[uuid.UUID]int64{}
+	for _, m := range budget.Members {
+		balances[m.UserID] = m.BalanceCents
+	}
+	require.Equal(t, int64(200), balances[owner])
+	require.Equal(t, int64(-200), balances[member])
+}
+
+func TestLinkedPendingItemStaysOutOfBalances(t *testing.T) {
+	owner, member := uuid.New(), uuid.New()
+	status, itemType := "draft", "flight"
+	expense := Expense{ID: uuid.New(), AmountCents: 1000, Distribution: DistributionGroup, ItemType: &itemType, ItemStatus: &status,
+		Payments: []Payment{{UserID: owner, AmountCents: 1000}}, SpentAt: time.Now()}
+	item := budgetItemFromExpense(expense, []uuid.UUID{owner, member})
+	budget := buildBudget([]BudgetItem{item}, []uuid.UUID{owner, member})
+	require.Equal(t, ItemPending, item.Status)
+	require.Equal(t, int64(1000), budget.Totals.PendingCents)
+	require.Equal(t, int64(1), int64(budget.Totals.FlightsCount))
+	require.Empty(t, budget.Settlements)
+}
+
+func TestCreateExpenseRejectsInvalidCustomShares(t *testing.T) {
+	service, planning, owner, member, _ := setup()
+	_, err := service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
+		Title: "Cena", AmountCents: 1000, Distribution: DistributionCustom,
+		CustomShares: []Share{{UserID: owner, Cents: 400}, {UserID: member, Cents: 400}}})
+	require.ErrorAs(t, err, &ValidationError{})
+}
+
+func TestCreateExpenseRejectsOverpayment(t *testing.T) {
+	service, planning, owner, _, _ := setup()
+	_, err := service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
+		Title: "Cena", AmountCents: 1000, Distribution: DistributionGroup,
+		Payments: []Payment{{UserID: owner, AmountCents: 1500}}})
+	require.ErrorAs(t, err, &ValidationError{})
 }
 
 func TestComputeSharesSplitsRemainder(t *testing.T) {
@@ -106,7 +154,7 @@ func TestSuggestSettlementsBalancesDebts(t *testing.T) {
 func TestBudgetBalancesForGroupExpense(t *testing.T) {
 	service, planning, owner, member, _ := setup()
 	_, err := service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
-		Title: "Cena", AmountCents: 1000, PaidByUserID: owner, Distribution: DistributionGroup})
+		Title: "Cena", AmountCents: 1000, Payments: []Payment{{UserID: owner, AmountCents: 1000}}, Distribution: DistributionGroup})
 	require.NoError(t, err)
 
 	budget, err := service.GetBudget(context.Background(), member, planning)
@@ -124,11 +172,11 @@ func TestBudgetBalancesForGroupExpense(t *testing.T) {
 func TestCreateExpenseRejectsOutsiders(t *testing.T) {
 	service, planning, owner, _, outsider := setup()
 	_, err := service.CreateExpense(context.Background(), outsider, planning, CreateExpenseInput{
-		Title: "x", AmountCents: 100, PaidByUserID: outsider, Distribution: DistributionGroup})
+		Title: "x", AmountCents: 100, Payments: []Payment{{UserID: outsider, AmountCents: 100}}, Distribution: DistributionGroup})
 	require.ErrorIs(t, err, ErrForbidden)
 
 	_, err = service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
-		Title: "x", AmountCents: 100, PaidByUserID: outsider, Distribution: DistributionGroup})
+		Title: "x", AmountCents: 100, Payments: []Payment{{UserID: outsider, AmountCents: 100}}, Distribution: DistributionGroup})
 	require.Error(t, err)
 	require.ErrorAs(t, err, &ValidationError{})
 }
@@ -136,7 +184,7 @@ func TestCreateExpenseRejectsOutsiders(t *testing.T) {
 func TestOnlyCreatorOrAdminCanEdit(t *testing.T) {
 	service, planning, owner, member, _ := setup()
 	expense, err := service.CreateExpense(context.Background(), member, planning, CreateExpenseInput{
-		Title: "Taxi", AmountCents: 300, PaidByUserID: member, Distribution: DistributionGroup})
+		Title: "Taxi", AmountCents: 300, Payments: []Payment{{UserID: member, AmountCents: 300}}, Distribution: DistributionGroup})
 	require.NoError(t, err)
 
 	title := "Taxi aeropuerto"
@@ -144,8 +192,40 @@ func TestOnlyCreatorOrAdminCanEdit(t *testing.T) {
 	require.NoError(t, err)
 
 	other, err := service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
-		Title: "Hotel", AmountCents: 300, PaidByUserID: owner, Distribution: DistributionGroup})
+		Title: "Hotel", AmountCents: 300, Payments: []Payment{{UserID: owner, AmountCents: 300}}, Distribution: DistributionGroup})
 	require.NoError(t, err)
 	require.ErrorIs(t, service.DeleteExpense(context.Background(), member, planning, other.ID), ErrForbidden)
 	require.NoError(t, service.DeleteExpense(context.Background(), member, planning, expense.ID))
+}
+
+func TestAdminCanEditAndDeleteOtherMembersExpense(t *testing.T) {
+	service, planning, _, member, _ := setup()
+	admin := uuid.New()
+	membership := service.membership.(fakeMembership)
+	membership.members[admin] = plannings.PlanningMember{UserID: admin, PlanningID: planning, Role: plannings.RoleAdmin}
+	service.membership = membership
+
+	expense, err := service.CreateExpense(context.Background(), member, planning, CreateExpenseInput{
+		Title: "Taxi", AmountCents: 300, Payments: []Payment{{UserID: member, AmountCents: 300}}, Distribution: DistributionGroup})
+	require.NoError(t, err)
+
+	title := "Taxi actualizado"
+	_, err = service.UpdateExpense(context.Background(), admin, planning, expense.ID, UpdateExpenseInput{Title: &title})
+	require.NoError(t, err)
+	require.Equal(t, title, service.repository.(*fakeRepository).items[expense.ID].Title)
+	require.NoError(t, service.DeleteExpense(context.Background(), admin, planning, expense.ID))
+	_, err = service.repository.Get(context.Background(), planning, expense.ID)
+	require.ErrorIs(t, err, ErrExpenseNotFound)
+}
+
+func TestMemberCannotEditOrDeleteAnotherMembersExpense(t *testing.T) {
+	service, planning, owner, member, _ := setup()
+	expense, err := service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
+		Title: "Hotel", AmountCents: 300, Payments: []Payment{{UserID: owner, AmountCents: 300}}, Distribution: DistributionGroup})
+	require.NoError(t, err)
+
+	title := "Cambio no autorizado"
+	_, err = service.UpdateExpense(context.Background(), member, planning, expense.ID, UpdateExpenseInput{Title: &title})
+	require.ErrorIs(t, err, ErrForbidden)
+	require.ErrorIs(t, service.DeleteExpense(context.Background(), member, planning, expense.ID), ErrForbidden)
 }

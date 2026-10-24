@@ -4,22 +4,38 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 )
 
 const (
-	DistributionGroup                = "group"
-	DistributionSelectedParticipants = "selected_participants"
+	DistributionGroup                = expenseledger.DistributionGroup
+	DistributionSelectedParticipants = expenseledger.DistributionSelected
+	DistributionIndividual           = expenseledger.DistributionIndividual
+	DistributionCustom               = expenseledger.DistributionCustom
 )
 
+type Share = expenseledger.Share
+type Payment = expenseledger.Payment
+
 type Expense struct {
-	ID                 uuid.UUID
-	PlanningID         uuid.UUID
-	CreatedByUserID    uuid.UUID
-	PaidByUserID       uuid.UUID
+	ID              uuid.UUID
+	PlanningID      uuid.UUID
+	CreatedByUserID uuid.UUID
+	// PlanningItemID links the expense to a flight/booking; nil means a manual expense.
+	PlanningItemID *uuid.UUID
+	ItemType       *string
+	// ItemRefID is the id of the linked flight/booking row (used for navigation).
+	ItemRefID *uuid.UUID
+	// ItemStatus is the status of the linked flight/booking, used to mark the expense pending.
+	ItemStatus         *string
 	Title              string
 	AmountCents        int64
+	Currency           string
 	Distribution       string
 	ParticipantUserIDs []uuid.UUID
+	Shares             []Share
+	Payments           []Payment
 	Category           *string
 	Notes              *string
 	SpentAt            time.Time
@@ -30,9 +46,12 @@ type Expense struct {
 type CreateExpenseInput struct {
 	Title              string
 	AmountCents        int64
-	PaidByUserID       uuid.UUID
+	Currency           string
+	PlanningItemID     *uuid.UUID
+	Payments           []Payment
 	Distribution       string
 	ParticipantUserIDs []uuid.UUID
+	CustomShares       []Share
 	Category           *string
 	Notes              *string
 	SpentAt            *time.Time
@@ -41,9 +60,11 @@ type CreateExpenseInput struct {
 type UpdateExpenseInput struct {
 	Title              *string
 	AmountCents        *int64
-	PaidByUserID       *uuid.UUID
+	Currency           *string
+	Payments           *[]Payment
 	Distribution       *string
 	ParticipantUserIDs *[]uuid.UUID
+	CustomShares       *[]Share
 	Category           *string
 	Notes              *string
 	SpentAt            *time.Time
@@ -58,23 +79,20 @@ const (
 	ItemPending   = "pending"
 )
 
-type Share struct {
-	UserID uuid.UUID
-	Cents  int64
-}
-
 type BudgetItem struct {
-	ID           string
-	Source       string
-	SourceID     uuid.UUID
-	Title        string
-	Subtitle     *string
-	Status       string
-	AmountCents  int64
-	Distribution string
-	Payers       []Share
-	Shares       []Share
-	Date         time.Time
+	ID            string
+	Source        string
+	SourceID      uuid.UUID
+	Title         string
+	Subtitle      *string
+	Status        string
+	AmountCents   int64
+	Currency      string
+	Distribution  string
+	Payers        []Share
+	Shares        []Share
+	PaymentStatus string
+	Date          time.Time
 }
 
 type BudgetTotals struct {

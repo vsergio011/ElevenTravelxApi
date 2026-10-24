@@ -4,42 +4,13 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
+
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 )
 
-const (
-	distributionIndividual = "individual"
-)
-
-// computeShares splits cents equally among the eligible users in integer cents.
-// Remainders go to the first users in UUID order, matching bookings.AllocateCost.
-// "individual" means every eligible user owes the full amount.
+// computeShares delegates to the shared ledger so every module splits cents the same way.
 func computeShares(distribution string, amountCents int64, allMembers []uuid.UUID, selected []uuid.UUID) []Share {
-	eligible := allMembers
-	if distribution == DistributionSelectedParticipants {
-		eligible = selected
-	}
-	sorted := append([]uuid.UUID(nil), eligible...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].String() < sorted[j].String() })
-	shares := make([]Share, 0, len(sorted))
-	if len(sorted) == 0 {
-		return shares
-	}
-	if distribution == distributionIndividual {
-		for _, id := range sorted {
-			shares = append(shares, Share{UserID: id, Cents: amountCents})
-		}
-		return shares
-	}
-	count := int64(len(sorted))
-	base, remainder := amountCents/count, amountCents%count
-	for i, id := range sorted {
-		cents := base
-		if int64(i) < remainder {
-			cents++
-		}
-		shares = append(shares, Share{UserID: id, Cents: cents})
-	}
-	return shares
+	return expenseledger.ComputeShares(distribution, amountCents, allMembers, selected, nil)
 }
 
 // suggestSettlements greedily matches debtors with creditors so the fewest transfers settle the group.

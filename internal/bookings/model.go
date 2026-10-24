@@ -34,6 +34,7 @@ type Booking struct {
 	CostDistribution   string
 	ParticipantUserIDs []uuid.UUID
 	RouteStopID        *uuid.UUID
+	PlanningItemID     uuid.UUID
 	Payments           []Payment
 	CreatedAt          time.Time
 	UpdatedAt          time.Time

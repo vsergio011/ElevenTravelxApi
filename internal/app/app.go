@@ -50,7 +50,7 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	checklistService := checklists.NewService(checklistRepository, planningRepository)
 	checklistHandler := checklists.NewHandler(checklistService)
 	expenseRepository := expenses.NewPostgresRepository(pool)
-	expenseService := expenses.NewService(expenseRepository, planningRepository, bookingService, flightService)
+	expenseService := expenses.NewService(expenseRepository, planningRepository)
 	expenseHandler := expenses.NewHandler(expenseService)
 
 	return &Application{

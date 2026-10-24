@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"sort"
-	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/eleventravel/eleventravel-api/internal/bookings"
-	"github.com/eleventravel/eleventravel-api/internal/flights"
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
 )
@@ -25,30 +22,20 @@ type PlanningMembersLister interface {
 	ListMembers(ctx context.Context, planningID uuid.UUID) ([]plannings.PlanningMember, error)
 }
 
-type BookingSource interface {
-	ListBookings(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, filters bookings.BookingFilters) (bookings.PageResult[bookings.Booking], error)
-}
-
-type FlightSource interface {
-	List(ctx context.Context, actor, planning uuid.UUID, filters flights.Filters) ([]flights.Flight, error)
-}
-
 type Service struct {
 	repository Repository
 	membership PlanningMembership
-	bookings   BookingSource
-	flights    FlightSource
 }
 
-func NewService(repository Repository, membership PlanningMembership, bookingSource BookingSource, flightSource FlightSource) *Service {
-	return &Service{repository: repository, membership: membership, bookings: bookingSource, flights: flightSource}
+func NewService(repository Repository, membership PlanningMembership) *Service {
+	return &Service{repository: repository, membership: membership}
 }
 
 func (s *Service) CreateExpense(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input CreateExpenseInput) (Expense, error) {
 	if _, err := s.requireMembership(ctx, planningID, actorUserID); err != nil {
 		return Expense{}, err
 	}
-	if err := s.validateUsers(ctx, planningID, append([]uuid.UUID{input.PaidByUserID}, input.ParticipantUserIDs...)); err != nil {
+	if err := s.validateEconomics(ctx, planningID, input.AmountCents, input.Distribution, input.ParticipantUserIDs, input.CustomShares, input.Payments); err != nil {
 		return Expense{}, err
 	}
 	return s.repository.Create(ctx, planningID, actorUserID, input)
@@ -74,6 +61,10 @@ func (s *Service) UpdateExpense(ctx context.Context, actorUserID uuid.UUID, plan
 		return Expense{}, err
 	}
 
+	amount := expense.AmountCents
+	if input.AmountCents != nil {
+		amount = *input.AmountCents
+	}
 	distribution := expense.Distribution
 	if input.Distribution != nil {
 		distribution = *input.Distribution
@@ -82,19 +73,20 @@ func (s *Service) UpdateExpense(ctx context.Context, actorUserID uuid.UUID, plan
 	if input.ParticipantUserIDs != nil {
 		participants = *input.ParticipantUserIDs
 	}
+	custom := expense.Shares
+	if input.CustomShares != nil {
+		custom = *input.CustomShares
+	}
+	payments := expense.Payments
+	if input.Payments != nil {
+		payments = *input.Payments
+	}
 	if distribution == DistributionGroup {
 		empty := []uuid.UUID{}
 		input.ParticipantUserIDs = &empty
 		participants = empty
-	} else if len(participants) == 0 {
-		return Expense{}, ValidationError{Details: []response.ErrorDetail{{Field: "participant_user_ids", Message: "select at least one participant"}}}
 	}
-
-	toCheck := append([]uuid.UUID{}, participants...)
-	if input.PaidByUserID != nil {
-		toCheck = append(toCheck, *input.PaidByUserID)
-	}
-	if err := s.validateUsers(ctx, planningID, toCheck); err != nil {
+	if err := s.validateEconomics(ctx, planningID, amount, distribution, participants, custom, payments); err != nil {
 		return Expense{}, err
 	}
 	return s.repository.Update(ctx, planningID, expenseID, input)
@@ -107,131 +99,58 @@ func (s *Service) DeleteExpense(ctx context.Context, actorUserID uuid.UUID, plan
 	return s.repository.Delete(ctx, planningID, expenseID)
 }
 
-// GetBudget builds one read model from manual expenses plus confirmed/proposed bookings and flights.
-// Booking and flight rows are calculated, never copied, so edits stay in their own modules.
+// GetBudget is a pure read model over expenses: flights and bookings appear through their linked expense,
+// so nothing is computed twice.
 func (s *Service) GetBudget(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID) (Budget, error) {
 	if _, err := s.requireMembership(ctx, planningID, actorUserID); err != nil {
 		return Budget{}, err
 	}
-	lister, ok := s.membership.(PlanningMembersLister)
-	if !ok {
-		return Budget{}, ErrForbidden
-	}
-	members, err := lister.ListMembers(ctx, planningID)
+	memberIDs, err := s.memberIDs(ctx, planningID)
 	if err != nil {
 		return Budget{}, err
 	}
-	memberIDs := make([]uuid.UUID, 0, len(members))
-	for _, member := range members {
-		memberIDs = append(memberIDs, member.UserID)
-	}
-
-	items := []BudgetItem{}
-
 	expenseList, err := s.repository.List(ctx, planningID)
 	if err != nil {
 		return Budget{}, err
 	}
+
+	items := make([]BudgetItem, 0, len(expenseList))
 	for _, expense := range expenseList {
-		items = append(items, BudgetItem{
-			ID: "expense:" + expense.ID.String(), Source: SourceExpense, SourceID: expense.ID,
-			Title: expense.Title, Subtitle: expense.Category, Status: ItemConfirmed,
-			AmountCents: expense.AmountCents, Distribution: expense.Distribution,
-			Payers: []Share{{UserID: expense.PaidByUserID, Cents: expense.AmountCents}},
-			Shares: computeShares(expense.Distribution, expense.AmountCents, memberIDs, expense.ParticipantUserIDs),
-			Date:   expense.SpentAt,
-		})
+		items = append(items, budgetItemFromExpense(expense, memberIDs))
 	}
-
-	if s.bookings != nil {
-		bookingItems, bookingErr := s.bookingItems(ctx, actorUserID, planningID, memberIDs)
-		if bookingErr != nil {
-			return Budget{}, bookingErr
-		}
-		items = append(items, bookingItems...)
-	}
-
-	if s.flights != nil {
-		flightList, flightErr := s.flights.List(ctx, actorUserID, planningID, flights.Filters{})
-		if flightErr != nil {
-			return Budget{}, flightErr
-		}
-		for _, flight := range flightList {
-			if flight.CostCents <= 0 {
-				continue
-			}
-			status := ItemPending
-			if flight.Status == flights.StatusConfirmed {
-				status = ItemConfirmed
-			}
-			items = append(items, BudgetItem{
-				ID: "flight:" + flight.ID.String(), Source: SourceFlight, SourceID: flight.ID,
-				Title: flightTitle(flight), Status: status, AmountCents: flight.CostCents,
-				Distribution: flight.CostDistribution, Payers: []Share{},
-				Shares: computeShares(flight.CostDistribution, flight.CostCents, memberIDs, flight.ParticipantUserIDs),
-				Date:   flightDate(flight),
-			})
-		}
-	}
-
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Date.After(items[j].Date) })
 	return buildBudget(items, memberIDs), nil
 }
 
-func (s *Service) bookingItems(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, memberIDs []uuid.UUID) ([]BudgetItem, error) {
-	items := []BudgetItem{}
-	for page := 1; ; page++ {
-		result, err := s.bookings.ListBookings(ctx, actorUserID, planningID, bookings.BookingFilters{Page: bookings.Page{Number: page, Size: 100}})
-		if err != nil {
-			return nil, err
-		}
-		for _, booking := range result.Items {
-			if booking.CostCents <= 0 {
-				continue
-			}
-			status := ItemPending
-			if booking.Status == bookings.StatusConfirmed {
-				status = ItemConfirmed
-			}
-			payers := make([]Share, 0, len(booking.Payments))
-			for _, payment := range booking.Payments {
-				payers = append(payers, Share{UserID: payment.UserID, Cents: payment.AmountCents})
-			}
-			subtitle := booking.Type
-			date := booking.CreatedAt
-			if booking.OccursAt != nil {
-				date = *booking.OccursAt
-			}
-			items = append(items, BudgetItem{
-				ID: "booking:" + booking.ID.String(), Source: SourceBooking, SourceID: booking.ID,
-				Title: booking.Title, Subtitle: &subtitle, Status: status, AmountCents: booking.CostCents,
-				Distribution: booking.CostDistribution, Payers: payers,
-				Shares: computeShares(booking.CostDistribution, booking.CostCents, memberIDs, booking.ParticipantUserIDs),
-				Date:   date,
-			})
-		}
-		if page >= result.TotalPages {
-			return items, nil
-		}
+func budgetItemFromExpense(expense Expense, memberIDs []uuid.UUID) BudgetItem {
+	source := SourceExpense
+	if expense.ItemType != nil {
+		source = *expense.ItemType
 	}
-}
-
-func flightTitle(flight flights.Flight) string {
-	if len(flight.Segments) > 0 {
-		first, last := flight.Segments[0], flight.Segments[len(flight.Segments)-1]
-		return first.OriginLabel + " → " + last.DestinationLabel
+	status := ItemConfirmed
+	if expense.ItemStatus != nil && *expense.ItemStatus != "confirmed" {
+		status = ItemPending
 	}
-	if flight.FlightNumber != nil && strings.TrimSpace(*flight.FlightNumber) != "" {
-		return "Vuelo " + *flight.FlightNumber
+	shares := expense.Shares
+	if len(shares) == 0 {
+		shares = computeShares(expense.Distribution, expense.AmountCents, memberIDs, expense.ParticipantUserIDs)
 	}
-	return "Vuelo"
-}
-
-func flightDate(flight flights.Flight) time.Time {
-	if len(flight.Segments) > 0 {
-		return flight.Segments[0].DepartureAt
+	payers := make([]Share, 0, len(expense.Payments))
+	for _, payment := range expense.Payments {
+		payers = append(payers, Share{UserID: payment.UserID, Cents: payment.AmountCents})
 	}
-	return flight.CreatedAt
+	sourceID := expense.ID
+	if expense.ItemRefID != nil {
+		sourceID = *expense.ItemRefID
+	}
+	return BudgetItem{
+		ID: "expense:" + expense.ID.String(), Source: source, SourceID: sourceID,
+		Title: expense.Title, Subtitle: expense.Category, Status: status,
+		AmountCents: expense.AmountCents, Currency: expense.Currency, Distribution: expense.Distribution,
+		Payers: payers, Shares: shares,
+		PaymentStatus: expenseledger.PaymentStatus(expense.AmountCents, expense.Payments),
+		Date:          expense.SpentAt,
+	}
 }
 
 func buildBudget(items []BudgetItem, memberIDs []uuid.UUID) Budget {
@@ -319,23 +238,65 @@ func (s *Service) requireEditPermission(ctx context.Context, planningID uuid.UUI
 	return expense, nil
 }
 
-func (s *Service) validateUsers(ctx context.Context, planningID uuid.UUID, userIDs []uuid.UUID) error {
+func (s *Service) memberIDs(ctx context.Context, planningID uuid.UUID) ([]uuid.UUID, error) {
 	lister, ok := s.membership.(PlanningMembersLister)
 	if !ok {
-		return ErrForbidden
+		return nil, ErrForbidden
 	}
 	members, err := lister.ListMembers(ctx, planningID)
 	if err != nil {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, 0, len(members))
+	for _, member := range members {
+		ids = append(ids, member.UserID)
+	}
+	return ids, nil
+}
+
+// validateEconomics checks that payers, participants and shares are planning members and that the amounts are coherent.
+func (s *Service) validateEconomics(ctx context.Context, planningID uuid.UUID, amount int64, distribution string, participants []uuid.UUID, custom []Share, payments []Payment) error {
+	memberIDs, err := s.memberIDs(ctx, planningID)
+	if err != nil {
 		return err
 	}
-	allowed := make(map[uuid.UUID]struct{}, len(members))
-	for _, member := range members {
-		allowed[member.UserID] = struct{}{}
+	allowed := make(map[uuid.UUID]struct{}, len(memberIDs))
+	for _, id := range memberIDs {
+		allowed[id] = struct{}{}
 	}
-	for _, userID := range userIDs {
-		if _, exists := allowed[userID]; !exists {
-			return ValidationError{Details: []response.ErrorDetail{{Field: "participant_user_ids", Message: "all users must be planning members"}}}
+	invalid := func(field, message string) error {
+		return ValidationError{Details: []response.ErrorDetail{{Field: field, Message: message}}}
+	}
+	for _, id := range participants {
+		if _, ok := allowed[id]; !ok {
+			return invalid("participant_user_ids", "all users must be planning members")
 		}
+	}
+	if distribution == DistributionSelectedParticipants && len(participants) == 0 {
+		return invalid("participant_user_ids", "select at least one participant")
+	}
+	if distribution == DistributionCustom {
+		for _, share := range custom {
+			if _, ok := allowed[share.UserID]; !ok {
+				return invalid("shares", "all users must be planning members")
+			}
+		}
+		if err := expenseledger.ValidateShares(distribution, amount, custom); err != nil {
+			return invalid("shares", "shares must add up to amount_cents")
+		}
+	}
+	var paid int64
+	for _, payment := range payments {
+		if _, ok := allowed[payment.UserID]; !ok {
+			return invalid("payments", "all payers must be planning members")
+		}
+		if payment.AmountCents <= 0 {
+			return invalid("payments", "payment amounts must be positive")
+		}
+		paid += payment.AmountCents
+	}
+	if paid > amount {
+		return invalid("payments", "payments cannot exceed amount_cents")
 	}
 	return nil
 }

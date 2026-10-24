@@ -3,7 +3,10 @@ package flights
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -25,7 +28,7 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const flightColumns = `id, planning_id, created_by_user_id, status, airline, flight_number, reservation_code, notes, offer_url, cabin_class, baggage, cost_cents, currency, cost_distribution, created_at, updated_at`
+const flightColumns = `id, planning_id, created_by_user_id, status, airline, flight_number, reservation_code, notes, offer_url, cabin_class, baggage, planning_item_id, created_at, updated_at`
 
 func (r *PostgresRepository) Create(ctx context.Context, actor, planning uuid.UUID, input CreateInput) (Flight, error) {
 	tx, err := r.pool.Begin(ctx)
@@ -33,7 +36,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actor, planning uuid.UU
 		return Flight{}, err
 	}
 	defer tx.Rollback(ctx)
-	flight, err := scanFlight(tx.QueryRow(ctx, `INSERT INTO public.flights (planning_id, created_by_user_id, status, airline, flight_number, reservation_code, notes, offer_url, cabin_class, baggage, cost_cents, currency, cost_distribution) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING `+flightColumns, planning, actor, input.Status, input.Airline, input.FlightNumber, input.ReservationCode, input.Notes, input.OfferURL, input.CabinClass, input.Baggage, input.CostCents, input.Currency, input.CostDistribution))
+	flight, err := scanFlight(tx.QueryRow(ctx, `INSERT INTO public.flights (planning_id, created_by_user_id, status, airline, flight_number, reservation_code, notes, offer_url, cabin_class, baggage) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING `+flightColumns, planning, actor, input.Status, input.Airline, input.FlightNumber, input.ReservationCode, input.Notes, input.OfferURL, input.CabinClass, input.Baggage))
 	if err != nil {
 		return Flight{}, err
 	}
@@ -51,10 +54,69 @@ func (r *PostgresRepository) Create(ctx context.Context, actor, planning uuid.UU
 	if err != nil {
 		return Flight{}, err
 	}
+	cost, currency, distribution := input.CostCents, input.Currency, input.CostDistribution
+	if err = syncExpense(ctx, tx, flight, actor, &cost, &currency, &distribution, true); err != nil {
+		return Flight{}, err
+	}
+	if err = applyCosts(ctx, tx, []*Flight{&flight}); err != nil {
+		return Flight{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Flight{}, err
 	}
 	return flight, nil
+}
+
+// syncExpense pushes the flight cost into the shared expense model; the creator is the default payer.
+func syncExpense(ctx context.Context, q queryer, flight Flight, actor uuid.UUID, cost *int64, currency, distribution *string, defaultPayer bool) error {
+	sync := expenseledger.ItemSync{
+		PlanningID: flight.PlanningID, PlanningItemID: flight.PlanningItemID, ActorUserID: actor,
+		Title: ExpenseTitle(flight), Category: "flight", SpentAt: ExpenseDate(flight),
+		AmountCents: cost, Currency: currency, Distribution: distribution,
+		ParticipantUserIDs: flight.ParticipantUserIDs, FollowAmount: true,
+	}
+	if defaultPayer {
+		sync.DefaultPayerUserID = &flight.CreatedByUserID
+	}
+	return expenseledger.SyncItemExpense(ctx, q, sync)
+}
+
+// ExpenseTitle names the flight's expense after its route.
+func ExpenseTitle(flight Flight) string {
+	if len(flight.Segments) > 0 {
+		first, last := flight.Segments[0], flight.Segments[len(flight.Segments)-1]
+		return first.OriginLabel + " → " + last.DestinationLabel
+	}
+	if flight.FlightNumber != nil && strings.TrimSpace(*flight.FlightNumber) != "" {
+		return "Vuelo " + *flight.FlightNumber
+	}
+	return "Vuelo"
+}
+
+func ExpenseDate(flight Flight) time.Time {
+	if len(flight.Segments) > 0 {
+		return flight.Segments[0].DepartureAt
+	}
+	return flight.CreatedAt
+}
+
+// applyCosts fills the cost view of each flight from its linked expense.
+func applyCosts(ctx context.Context, q queryer, flights []*Flight) error {
+	ids := make([]uuid.UUID, 0, len(flights))
+	for _, flight := range flights {
+		ids = append(ids, flight.PlanningItemID)
+	}
+	costs, err := expenseledger.LoadItemCosts(ctx, q, ids)
+	if err != nil {
+		return err
+	}
+	for _, flight := range flights {
+		flight.Currency, flight.CostDistribution, flight.CostCents = expenseledger.DefaultCurrency, DistributionGroup, 0
+		if cost, ok := costs[flight.PlanningItemID]; ok {
+			flight.CostCents, flight.Currency, flight.CostDistribution = cost.AmountCents, cost.Currency, cost.Distribution
+		}
+	}
+	return nil
 }
 
 func (r *PostgresRepository) Get(ctx context.Context, planning, id uuid.UUID) (Flight, error) {
@@ -73,6 +135,10 @@ func (r *PostgresRepository) get(ctx context.Context, q queryer, planning, id uu
 		return Flight{}, err
 	}
 	flight.ParticipantUserIDs, err = listParticipants(ctx, q, flight.ID)
+	if err != nil {
+		return Flight{}, err
+	}
+	err = applyCosts(ctx, q, []*Flight{&flight})
 	return flight, err
 }
 
@@ -118,6 +184,13 @@ func (r *PostgresRepository) List(ctx context.Context, planning uuid.UUID, filte
 			result[index].ParticipantUserIDs = []uuid.UUID{}
 		}
 	}
+	pointers := make([]*Flight, 0, len(result))
+	for index := range result {
+		pointers = append(pointers, &result[index])
+	}
+	if err := applyCosts(ctx, r.pool, pointers); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -127,7 +200,7 @@ func (r *PostgresRepository) Update(ctx context.Context, planning, id uuid.UUID,
 		return Flight{}, err
 	}
 	defer tx.Rollback(ctx)
-	flight, err := scanFlight(tx.QueryRow(ctx, `UPDATE public.flights SET status=COALESCE($3,status),airline=COALESCE($4,airline),flight_number=COALESCE($5,flight_number),reservation_code=COALESCE($6,reservation_code),notes=COALESCE($7,notes),offer_url=COALESCE($8,offer_url),cabin_class=COALESCE($9,cabin_class),baggage=COALESCE($10,baggage),cost_cents=COALESCE($11,cost_cents),currency=COALESCE($12,currency),cost_distribution=COALESCE($13,cost_distribution),updated_at=now() WHERE planning_id=$1 AND id=$2 RETURNING `+flightColumns, planning, id, input.Status, input.Airline, input.FlightNumber, input.ReservationCode, input.Notes, input.OfferURL, input.CabinClass, input.Baggage, input.CostCents, input.Currency, input.CostDistribution))
+	flight, err := scanFlight(tx.QueryRow(ctx, `UPDATE public.flights SET status=COALESCE($3,status),airline=COALESCE($4,airline),flight_number=COALESCE($5,flight_number),reservation_code=COALESCE($6,reservation_code),notes=COALESCE($7,notes),offer_url=COALESCE($8,offer_url),cabin_class=COALESCE($9,cabin_class),baggage=COALESCE($10,baggage),updated_at=now() WHERE planning_id=$1 AND id=$2 RETURNING `+flightColumns, planning, id, input.Status, input.Airline, input.FlightNumber, input.ReservationCode, input.Notes, input.OfferURL, input.CabinClass, input.Baggage))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Flight{}, ErrFlightNotFound
 	}
@@ -150,6 +223,12 @@ func (r *PostgresRepository) Update(ctx context.Context, planning, id uuid.UUID,
 	}
 	flight.ParticipantUserIDs, err = listParticipants(ctx, tx, id)
 	if err != nil {
+		return Flight{}, err
+	}
+	if err = syncExpense(ctx, tx, flight, flight.CreatedByUserID, input.CostCents, input.Currency, input.CostDistribution, true); err != nil {
+		return Flight{}, err
+	}
+	if err = applyCosts(ctx, tx, []*Flight{&flight}); err != nil {
 		return Flight{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -180,7 +259,7 @@ type queryer interface {
 
 func scanFlight(row interface{ Scan(...any) error }) (Flight, error) {
 	var f Flight
-	err := row.Scan(&f.ID, &f.PlanningID, &f.CreatedByUserID, &f.Status, &f.Airline, &f.FlightNumber, &f.ReservationCode, &f.Notes, &f.OfferURL, &f.CabinClass, &f.Baggage, &f.CostCents, &f.Currency, &f.CostDistribution, &f.CreatedAt, &f.UpdatedAt)
+	err := row.Scan(&f.ID, &f.PlanningID, &f.CreatedByUserID, &f.Status, &f.Airline, &f.FlightNumber, &f.ReservationCode, &f.Notes, &f.OfferURL, &f.CabinClass, &f.Baggage, &f.PlanningItemID, &f.CreatedAt, &f.UpdatedAt)
 	return f, err
 }
 func replaceParticipants(ctx context.Context, q queryer, id uuid.UUID, ids []uuid.UUID) error {

@@ -6,7 +6,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
+	"github.com/eleventravel/eleventravel-api/internal/http/response"
 )
 
 type Repository interface {
@@ -25,14 +29,23 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const expenseColumns = `id, planning_id, created_by_user_id, paid_by_user_id, title, amount_cents, distribution, category, notes, spent_at, created_at, updated_at`
+// The linked flight/booking status is joined only to mark the expense pending until it is confirmed.
+const expenseSelect = `
+	SELECT e.id, e.planning_id, e.created_by_user_id, e.planning_item_id, pi.item_type, COALESCE(f.status, b.status), COALESCE(f.id, b.id),
+		e.title, e.amount_cents, e.currency, e.distribution, e.category, e.notes, e.spent_at, e.created_at, e.updated_at
+	FROM public.expenses e
+	LEFT JOIN public.planning_items pi ON pi.id = e.planning_item_id
+	LEFT JOIN public.flights f ON f.planning_item_id = pi.id
+	LEFT JOIN public.bookings b ON b.planning_item_id = pi.id`
 
 func scanExpense(row pgx.Row) (Expense, error) {
 	var expense Expense
-	err := row.Scan(&expense.ID, &expense.PlanningID, &expense.CreatedByUserID, &expense.PaidByUserID, &expense.Title,
-		&expense.AmountCents, &expense.Distribution, &expense.Category, &expense.Notes, &expense.SpentAt,
-		&expense.CreatedAt, &expense.UpdatedAt)
+	err := row.Scan(&expense.ID, &expense.PlanningID, &expense.CreatedByUserID, &expense.PlanningItemID, &expense.ItemType, &expense.ItemStatus, &expense.ItemRefID,
+		&expense.Title, &expense.AmountCents, &expense.Currency, &expense.Distribution, &expense.Category, &expense.Notes,
+		&expense.SpentAt, &expense.CreatedAt, &expense.UpdatedAt)
 	expense.ParticipantUserIDs = []uuid.UUID{}
+	expense.Shares = []Share{}
+	expense.Payments = []Payment{}
 	return expense, err
 }
 
@@ -43,76 +56,105 @@ func (r *PostgresRepository) Create(ctx context.Context, planningID uuid.UUID, a
 	}
 	defer tx.Rollback(ctx)
 
-	expense, err := scanExpense(tx.QueryRow(ctx, `
-		INSERT INTO public.expenses (planning_id, created_by_user_id, paid_by_user_id, title, amount_cents, distribution, category, notes, spent_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7::text, ''), NULLIF($8::text, ''), COALESCE($9, now()))
-		RETURNING `+expenseColumns,
-		planningID, actorUserID, input.PaidByUserID, input.Title, input.AmountCents, input.Distribution,
-		input.Category, input.Notes, input.SpentAt))
+	id, err := expenseledger.Insert(ctx, tx, expenseledger.WriteInput{
+		PlanningID: planningID, ActorUserID: actorUserID, PlanningItemID: input.PlanningItemID,
+		Title: input.Title, Category: input.Category, Notes: input.Notes, SpentAt: input.SpentAt,
+		AmountCents: input.AmountCents, Currency: input.Currency, Distribution: input.Distribution,
+		ParticipantUserIDs: input.ParticipantUserIDs, CustomShares: input.CustomShares, Payments: input.Payments,
+	})
 	if err != nil {
-		return Expense{}, err
-	}
-	if err := replaceParticipants(ctx, tx, expense.ID, input.ParticipantUserIDs); err != nil {
-		return Expense{}, err
+		return Expense{}, mapWriteError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Expense{}, err
+		return Expense{}, mapWriteError(err)
 	}
-	expense.ParticipantUserIDs = input.ParticipantUserIDs
-	return expense, nil
+	return r.Get(ctx, planningID, id)
 }
 
 func (r *PostgresRepository) Get(ctx context.Context, planningID uuid.UUID, expenseID uuid.UUID) (Expense, error) {
-	expense, err := scanExpense(r.pool.QueryRow(ctx, `SELECT `+expenseColumns+` FROM public.expenses WHERE id = $1 AND planning_id = $2`, expenseID, planningID))
+	return r.get(ctx, r.pool, planningID, expenseID)
+}
+
+func (r *PostgresRepository) get(ctx context.Context, q expenseledger.Querier, planningID uuid.UUID, expenseID uuid.UUID) (Expense, error) {
+	expense, err := scanExpense(q.QueryRow(ctx, expenseSelect+` WHERE e.id = $1 AND e.planning_id = $2`, expenseID, planningID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Expense{}, ErrExpenseNotFound
 		}
 		return Expense{}, err
 	}
-	participants, err := r.listParticipants(ctx, []uuid.UUID{expense.ID})
-	if err != nil {
+	list := []Expense{expense}
+	if err := r.attachDetails(ctx, q, list); err != nil {
 		return Expense{}, err
 	}
-	if ids, ok := participants[expense.ID]; ok {
-		expense.ParticipantUserIDs = ids
-	}
-	return expense, nil
+	return list[0], nil
 }
 
 func (r *PostgresRepository) List(ctx context.Context, planningID uuid.UUID) ([]Expense, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+expenseColumns+` FROM public.expenses WHERE planning_id = $1 ORDER BY spent_at DESC, created_at DESC`, planningID)
+	rows, err := r.pool.Query(ctx, expenseSelect+` WHERE e.planning_id = $1 ORDER BY e.spent_at DESC, e.created_at DESC`, planningID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	expenses := []Expense{}
-	ids := []uuid.UUID{}
 	for rows.Next() {
 		expense, scanErr := scanExpense(rows)
 		if scanErr != nil {
 			return nil, scanErr
 		}
 		expenses = append(expenses, expense)
-		ids = append(ids, expense.ID)
 	}
 	if rows.Err() != nil {
 		return nil, rows.Err()
 	}
-	if len(ids) == 0 {
-		return expenses, nil
-	}
-	participants, err := r.listParticipants(ctx, ids)
-	if err != nil {
+	rows.Close()
+	if err := r.attachDetails(ctx, r.pool, expenses); err != nil {
 		return nil, err
 	}
-	for i := range expenses {
-		if list, ok := participants[expenses[i].ID]; ok {
-			expenses[i].ParticipantUserIDs = list
+	return expenses, nil
+}
+
+// attachDetails loads shares and payments for the given expenses in two queries.
+func (r *PostgresRepository) attachDetails(ctx context.Context, q expenseledger.Querier, expenses []Expense) error {
+	if len(expenses) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(expenses))
+	index := make(map[uuid.UUID]int, len(expenses))
+	for i, expense := range expenses {
+		ids = append(ids, expense.ID)
+		index[expense.ID] = i
+	}
+	rows, err := q.Query(ctx, `SELECT expense_id, user_id, share_cents FROM public.expense_participants WHERE expense_id = ANY($1) ORDER BY expense_id, user_id`, ids)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var expenseID uuid.UUID
+		var share Share
+		if err := rows.Scan(&expenseID, &share.UserID, &share.Cents); err != nil {
+			rows.Close()
+			return err
+		}
+		i := index[expenseID]
+		expenses[i].Shares = append(expenses[i].Shares, share)
+		if expenses[i].Distribution != DistributionGroup {
+			expenses[i].ParticipantUserIDs = append(expenses[i].ParticipantUserIDs, share.UserID)
 		}
 	}
-	return expenses, nil
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	payments, err := expenseledger.LoadPayments(ctx, q, ids)
+	if err != nil {
+		return err
+	}
+	for expenseID, list := range payments {
+		expenses[index[expenseID]].Payments = list
+	}
+	return nil
 }
 
 func (r *PostgresRepository) Update(ctx context.Context, planningID uuid.UUID, expenseID uuid.UUID, input UpdateExpenseInput) (Expense, error) {
@@ -122,32 +164,49 @@ func (r *PostgresRepository) Update(ctx context.Context, planningID uuid.UUID, e
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = scanExpense(tx.QueryRow(ctx, `
-		UPDATE public.expenses SET
-			title = COALESCE($3, title),
-			amount_cents = COALESCE($4, amount_cents),
-			paid_by_user_id = COALESCE($5, paid_by_user_id),
-			distribution = COALESCE($6, distribution),
-			category = CASE WHEN $7::text IS NULL THEN category ELSE NULLIF($7::text, '') END,
-			notes = CASE WHEN $8::text IS NULL THEN notes ELSE NULLIF($8::text, '') END,
-			spent_at = COALESCE($9, spent_at)
-		WHERE id = $1 AND planning_id = $2
-		RETURNING `+expenseColumns,
-		expenseID, planningID, input.Title, input.AmountCents, input.PaidByUserID, input.Distribution,
-		input.Category, input.Notes, input.SpentAt))
+	current, err := r.get(ctx, tx, planningID, expenseID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Expense{}, ErrExpenseNotFound
-		}
 		return Expense{}, err
 	}
+	write := expenseledger.WriteInput{
+		PlanningID: planningID, Title: current.Title, AmountCents: current.AmountCents, Currency: current.Currency,
+		Distribution: current.Distribution, Category: current.Category, Notes: current.Notes,
+		ParticipantUserIDs: current.ParticipantUserIDs, CustomShares: current.Shares, SpentAt: input.SpentAt,
+	}
+	if input.Title != nil {
+		write.Title = *input.Title
+	}
+	if input.AmountCents != nil {
+		write.AmountCents = *input.AmountCents
+	}
+	if input.Currency != nil {
+		write.Currency = *input.Currency
+	}
+	if input.Distribution != nil {
+		write.Distribution = *input.Distribution
+	}
+	if input.Category != nil {
+		write.Category = input.Category
+	}
+	if input.Notes != nil {
+		write.Notes = input.Notes
+	}
 	if input.ParticipantUserIDs != nil {
-		if err := replaceParticipants(ctx, tx, expenseID, *input.ParticipantUserIDs); err != nil {
-			return Expense{}, err
+		write.ParticipantUserIDs = *input.ParticipantUserIDs
+	}
+	if input.CustomShares != nil {
+		write.CustomShares = *input.CustomShares
+	}
+	if err := expenseledger.Update(ctx, tx, expenseID, write); err != nil {
+		return Expense{}, mapWriteError(err)
+	}
+	if input.Payments != nil {
+		if err := expenseledger.ReplacePayments(ctx, tx, expenseID, *input.Payments); err != nil {
+			return Expense{}, mapWriteError(err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Expense{}, err
+		return Expense{}, mapWriteError(err)
 	}
 	return r.Get(ctx, planningID, expenseID)
 }
@@ -163,32 +222,23 @@ func (r *PostgresRepository) Delete(ctx context.Context, planningID uuid.UUID, e
 	return nil
 }
 
-func replaceParticipants(ctx context.Context, tx pgx.Tx, expenseID uuid.UUID, userIDs []uuid.UUID) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM public.expense_participants WHERE expense_id = $1`, expenseID); err != nil {
-		return err
+// mapWriteError turns integrity violations (foreign item of another planning, shares not matching the amount)
+// into validation errors so the API answers 400 instead of 500.
+func mapWriteError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrExpenseNotFound
 	}
-	for _, userID := range userIDs {
-		if _, err := tx.Exec(ctx, `INSERT INTO public.expense_participants (expense_id, user_id) VALUES ($1, $2)`, expenseID, userID); err != nil {
-			return err
+	if errors.Is(err, expenseledger.ErrInvalidShares) {
+		return ValidationError{Details: []response.ErrorDetail{{Field: "participants", Message: "shares must add up to amount_cents"}}}
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23503":
+			return ValidationError{Details: []response.ErrorDetail{{Field: "planning_item_id", Message: "planning_item_id does not belong to this planning"}}}
+		case "23514":
+			return ValidationError{Details: []response.ErrorDetail{{Field: "participants", Message: "shares must add up to amount_cents"}}}
 		}
 	}
-	return nil
-}
-
-func (r *PostgresRepository) listParticipants(ctx context.Context, expenseIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
-	rows, err := r.pool.Query(ctx, `SELECT expense_id, user_id FROM public.expense_participants WHERE expense_id = ANY($1) ORDER BY created_at`, expenseIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := map[uuid.UUID][]uuid.UUID{}
-	for rows.Next() {
-		var expenseID, userID uuid.UUID
-		if err := rows.Scan(&expenseID, &userID); err != nil {
-			return nil, err
-		}
-		result[expenseID] = append(result[expenseID], userID)
-	}
-	return result, rows.Err()
+	return err
 }
