@@ -131,7 +131,7 @@ type PlanningActivityResponse struct {
 type PlanningUpcomingActivityResponse struct {
 	ID        uuid.UUID `json:"id"`
 	Title     string    `json:"title"`
-	StartsAt  time.Time `json:"starts_at"`
+	StartsAt  string    `json:"starts_at"`
 	KindLabel *string   `json:"kind_label"`
 	ImageURL  *string   `json:"image_url"`
 }
@@ -176,6 +176,7 @@ type PlanningItineraryCoordinatesResponse struct {
 
 type PlanningItineraryStopResponse struct {
 	ID              uuid.UUID                            `json:"id"`
+	CreatedByUserID *uuid.UUID                           `json:"created_by_user_id,omitempty"`
 	Title           string                               `json:"title"`
 	Description     string                               `json:"description"`
 	Address         string                               `json:"address"`
@@ -330,6 +331,7 @@ func NewPlanningItineraryResponse(itinerary PlanningItinerary) PlanningItinerary
 		for _, stop := range day.Stops {
 			dayResponse.Stops = append(dayResponse.Stops, PlanningItineraryStopResponse{
 				ID:              stop.ID,
+				CreatedByUserID: stop.CreatedByUserID,
 				Title:           stop.Title,
 				Description:     stop.Description,
 				Address:         stop.Address,

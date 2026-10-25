@@ -1,6 +1,7 @@
 package bookings
 
 import (
+	"encoding/json"
 	"github.com/google/uuid"
 	"testing"
 )
@@ -72,6 +73,39 @@ func TestValidateCreateBookingRequestRejectsInvalidPayment(t *testing.T) {
 	_, err := validateCreateBookingRequest(CreateBookingRequest{Title: "Hotel", Type: TypeHotel, Payments: []PaymentRequest{{UserID: uuid.New(), AmountCents: 0}}})
 	if err == nil {
 		t.Fatal("expected payment validation error")
+	}
+}
+
+func TestValidateUpdateBookingRequestTracksRouteStopFieldPresence(t *testing.T) {
+	t.Parallel()
+
+	unchanged, err := validateUpdateBookingRequest(UpdateBookingRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error for omitted route_stop_id: %v", err)
+	}
+	if unchanged.RouteStopIDSet {
+		t.Fatal("omitted route_stop_id must leave the current association unchanged")
+	}
+
+	cleared, err := validateUpdateBookingRequest(UpdateBookingRequest{RouteStopID: json.RawMessage("null")})
+	if err != nil {
+		t.Fatalf("unexpected error for null route_stop_id: %v", err)
+	}
+	if !cleared.RouteStopIDSet || cleared.RouteStopID != nil {
+		t.Fatal("explicit null route_stop_id must request disassociation")
+	}
+
+	routeStopID := uuid.New()
+	routeStopIDJSON, err := json.Marshal(routeStopID)
+	if err != nil {
+		t.Fatalf("marshal route stop ID: %v", err)
+	}
+	associated, err := validateUpdateBookingRequest(UpdateBookingRequest{RouteStopID: routeStopIDJSON})
+	if err != nil {
+		t.Fatalf("unexpected error for valid route_stop_id: %v", err)
+	}
+	if !associated.RouteStopIDSet || associated.RouteStopID == nil || *associated.RouteStopID != routeStopID {
+		t.Fatal("route_stop_id must be parsed as a requested association")
 	}
 }
 

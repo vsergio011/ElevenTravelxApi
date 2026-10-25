@@ -675,6 +675,7 @@ func (h *Handler) reorderPlanningRoutes(writer http.ResponseWriter, request *htt
 func toPlanningItineraryStopResponse(stop PlanningItineraryStop) PlanningItineraryStopResponse {
 	return PlanningItineraryStopResponse{
 		ID:              stop.ID,
+		CreatedByUserID: stop.CreatedByUserID,
 		Title:           stop.Title,
 		Description:     stop.Description,
 		Address:         stop.Address,

@@ -263,6 +263,8 @@ func (h *Handler) writeDomainError(writer http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrBookingNotFound):
 		response.WriteError(writer, http.StatusNotFound, "booking_not_found", "Booking not found", nil)
+	case errors.Is(err, ErrRouteStopNotFound):
+		response.WriteError(writer, http.StatusNotFound, "route_stop_not_found", "Route stop not found", nil)
 	case errors.Is(err, ErrForbidden):
 		response.WriteError(writer, http.StatusForbidden, "forbidden", "You do not have permission to perform this action", nil)
 	case errors.Is(err, ErrConflict):

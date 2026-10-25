@@ -224,10 +224,13 @@ func (r *PostgresRepository) UpdateBooking(ctx context.Context, planningID uuid.
 			location = COALESCE($8, location),
 			notes = COALESCE($9, notes),
 			updated_at = now(),
-			route_stop_id = CASE WHEN $10::uuid IS NULL THEN NULL ELSE (SELECT id FROM public.planning_route_stops WHERE id = $10::uuid AND planning_id = $2) END
+			route_stop_id = CASE
+				WHEN $10::boolean THEN CASE WHEN $11::uuid IS NULL THEN NULL ELSE (SELECT id FROM public.planning_route_stops WHERE id = $11::uuid AND planning_id = $2) END
+				ELSE route_stop_id
+			END
 		WHERE id = $1 AND planning_id = $2
 		RETURNING `+bookingColumns,
-		bookingID, planningID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.Location, input.Notes, input.RouteStopID))
+		bookingID, planningID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.Location, input.Notes, input.RouteStopIDSet, input.RouteStopID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Booking{}, ErrBookingNotFound

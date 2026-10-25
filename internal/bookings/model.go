@@ -98,6 +98,7 @@ type UpdateBookingInput struct {
 	CostDistribution   *string
 	ParticipantUserIDs *[]uuid.UUID
 	RouteStopID        *uuid.UUID
+	RouteStopIDSet     bool
 	Payments           *[]Payment
 }
 

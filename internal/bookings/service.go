@@ -9,34 +9,34 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
 )
 
-// PlanningMembership exposes the existing planning membership/role lookup so
-// bookings can reuse the planning authorization system instead of creating a
-// parallel permissions model.
-type PlanningMembership interface {
+// PlanningAccess reuses planning membership and route-stop ownership for
+// booking authorization.
+type PlanningAccess interface {
 	GetMember(ctx context.Context, planningID uuid.UUID, userID uuid.UUID) (plannings.PlanningMember, error)
+	GetPlanningRouteStopCreator(ctx context.Context, planningID uuid.UUID, routeID uuid.UUID) (uuid.UUID, error)
 }
 
 type PlanningMembersLister interface {
 	ListMembers(ctx context.Context, planningID uuid.UUID) ([]plannings.PlanningMember, error)
 }
 
-type FlightBudgetSource interface {
-	GetConfirmedFlightBudget(ctx context.Context, planningID uuid.UUID, participantIDs []uuid.UUID) (map[uuid.UUID]int64, error)
-}
-
 type Service struct {
-	repository          Repository
-	membership          PlanningMembership
-	flightBudgetSources []FlightBudgetSource
+	repository Repository
+	membership PlanningAccess
 }
 
-func NewService(repository Repository, membership PlanningMembership, flightBudgetSources ...FlightBudgetSource) *Service {
-	return &Service{repository: repository, membership: membership, flightBudgetSources: flightBudgetSources}
+func NewService(repository Repository, membership PlanningAccess) *Service {
+	return &Service{repository: repository, membership: membership}
 }
 
 func (s *Service) CreateBooking(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input CreateBookingInput) (Booking, error) {
 	if _, err := s.requireMembership(ctx, planningID, actorUserID); err != nil {
 		return Booking{}, err
+	}
+	if input.RouteStopID != nil {
+		if err := s.requireRouteStopAssociationPermission(ctx, planningID, actorUserID, nil, input.RouteStopID); err != nil {
+			return Booking{}, err
+		}
 	}
 	if err := s.validatePlanningUsers(ctx, planningID, input.ParticipantUserIDs, input.Payments); err != nil {
 		return Booking{}, err
@@ -62,8 +62,20 @@ func (s *Service) ListBookings(ctx context.Context, actorUserID uuid.UUID, plann
 }
 
 func (s *Service) UpdateBooking(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, bookingID uuid.UUID, input UpdateBookingInput) (Booking, error) {
-	if err := s.requireEditPermission(ctx, planningID, actorUserID, bookingID); err != nil {
+	booking, err := s.repository.GetBookingByID(ctx, planningID, bookingID)
+	if err != nil {
 		return Booking{}, err
+	}
+	associationChanged := input.RouteStopIDSet && !sameUUIDPointer(booking.RouteStopID, input.RouteStopID)
+	if !associationChanged || !isRouteStopAssociationOnly(input) {
+		if err := s.requireEditPermissionForBooking(ctx, planningID, actorUserID, booking); err != nil {
+			return Booking{}, err
+		}
+	}
+	if associationChanged {
+		if err := s.requireRouteStopAssociationPermission(ctx, planningID, actorUserID, booking.RouteStopID, input.RouteStopID); err != nil {
+			return Booking{}, err
+		}
 	}
 	if input.ParticipantUserIDs != nil || input.Payments != nil {
 		var participants []uuid.UUID
@@ -128,15 +140,6 @@ func (s *Service) GetBudget(ctx context.Context, actorUserID uuid.UUID, planning
 		return nil, err
 	}
 	allocations := IndividualBudget(bookings.Items, ids)
-	for _, source := range s.flightBudgetSources {
-		flightAllocations, sourceErr := source.GetConfirmedFlightBudget(ctx, planningID, ids)
-		if sourceErr != nil {
-			return nil, sourceErr
-		}
-		for userID, cents := range flightAllocations {
-			allocations[userID] += cents
-		}
-	}
 	result := make([]BudgetLine, 0, len(ids))
 	for _, id := range ids {
 		result = append(result, BudgetLine{UserID: id, Cents: allocations[id]})
@@ -209,4 +212,72 @@ func (s *Service) requireEditPermissionForBooking(ctx context.Context, planningI
 	}
 
 	return ErrForbidden
+}
+
+func (s *Service) requireRouteStopAssociationPermission(ctx context.Context, planningID uuid.UUID, actorUserID uuid.UUID, currentStopID *uuid.UUID, nextStopID *uuid.UUID) error {
+	member, err := s.requireMembership(ctx, planningID, actorUserID)
+	if err != nil {
+		return err
+	}
+
+	var nextStopCreator uuid.UUID
+	if nextStopID != nil {
+		nextStopCreator, err = s.getRouteStopCreator(ctx, planningID, *nextStopID)
+		if err != nil {
+			return err
+		}
+	}
+
+	if member.Role == plannings.RoleOwner || member.Role == plannings.RoleAdmin {
+		return nil
+	}
+
+	if currentStopID != nil && (nextStopID == nil || *currentStopID != *nextStopID) {
+		creator, err := s.getRouteStopCreator(ctx, planningID, *currentStopID)
+		if err != nil {
+			return err
+		}
+		if creator != actorUserID {
+			return ErrForbidden
+		}
+	}
+
+	if nextStopID != nil && (currentStopID == nil || *currentStopID != *nextStopID) && nextStopCreator != actorUserID {
+		return ErrForbidden
+	}
+
+	return nil
+}
+
+func (s *Service) getRouteStopCreator(ctx context.Context, planningID uuid.UUID, routeID uuid.UUID) (uuid.UUID, error) {
+	creatorUserID, err := s.membership.GetPlanningRouteStopCreator(ctx, planningID, routeID)
+	if errors.Is(err, plannings.ErrPlanningNotFound) {
+		return uuid.Nil, ErrRouteStopNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return creatorUserID, nil
+}
+
+func sameUUIDPointer(left *uuid.UUID, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
+func isRouteStopAssociationOnly(input UpdateBookingInput) bool {
+	return input.RouteStopIDSet &&
+		input.Title == nil &&
+		input.Type == nil &&
+		input.Status == nil &&
+		input.ExternalURL == nil &&
+		input.OccursAt == nil &&
+		input.Location == nil &&
+		input.Notes == nil &&
+		input.CostCents == nil &&
+		input.CostDistribution == nil &&
+		input.ParticipantUserIDs == nil &&
+		input.Payments == nil
 }

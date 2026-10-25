@@ -12,7 +12,8 @@ import (
 )
 
 type fakeMembership struct {
-	members map[uuid.UUID]plannings.PlanningMember
+	members           map[uuid.UUID]plannings.PlanningMember
+	routeStopCreators map[uuid.UUID]uuid.UUID
 }
 
 func (m *fakeMembership) GetMember(_ context.Context, planningID uuid.UUID, userID uuid.UUID) (plannings.PlanningMember, error) {
@@ -21,6 +22,14 @@ func (m *fakeMembership) GetMember(_ context.Context, planningID uuid.UUID, user
 		return plannings.PlanningMember{}, plannings.ErrMemberNotFound
 	}
 	return member, nil
+}
+
+func (m *fakeMembership) GetPlanningRouteStopCreator(_ context.Context, _ uuid.UUID, routeID uuid.UUID) (uuid.UUID, error) {
+	creatorUserID, ok := m.routeStopCreators[routeID]
+	if !ok {
+		return uuid.Nil, plannings.ErrPlanningNotFound
+	}
+	return creatorUserID, nil
 }
 
 type fakeRepository struct {
@@ -45,6 +54,7 @@ func (r *fakeRepository) CreateBooking(_ context.Context, actorUserID uuid.UUID,
 		Title:           input.Title,
 		Type:            input.Type,
 		Status:          input.Status,
+		RouteStopID:     input.RouteStopID,
 		ExternalURL:     input.ExternalURL,
 		OccursAt:        input.OccursAt,
 		Location:        input.Location,
@@ -89,6 +99,9 @@ func (r *fakeRepository) UpdateBooking(_ context.Context, planningID uuid.UUID, 
 	}
 	if input.Title != nil {
 		booking.Title = *input.Title
+	}
+	if input.RouteStopIDSet {
+		booking.RouteStopID = input.RouteStopID
 	}
 	r.bookings[bookingID] = booking
 	return booking, nil
@@ -148,6 +161,54 @@ func TestServiceCreateBookingAllowsAnyMember(t *testing.T) {
 	require.Equal(t, 1, repo.createCalls)
 }
 
+func TestServiceCreateBookingAllowsPointCreatorToAssociateBooking(t *testing.T) {
+	t.Parallel()
+
+	planningID := uuid.New()
+	actorUserID := uuid.New()
+	routeStopID := uuid.New()
+	repo := newFakeRepository()
+	membership := &fakeMembership{
+		members: map[uuid.UUID]plannings.PlanningMember{
+			actorUserID: {PlanningID: planningID, UserID: actorUserID, Role: plannings.RoleMember},
+		},
+		routeStopCreators: map[uuid.UUID]uuid.UUID{routeStopID: actorUserID},
+	}
+	service := NewService(repo, membership)
+
+	booking, err := service.CreateBooking(context.Background(), actorUserID, planningID, CreateBookingInput{
+		Title: "Hotel Central", Type: TypeHotel, Status: StatusProposal, RouteStopID: &routeStopID,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, &routeStopID, booking.RouteStopID)
+	require.Equal(t, 1, repo.createCalls)
+}
+
+func TestServiceCreateBookingBlocksAssociationToAnotherMembersPoint(t *testing.T) {
+	t.Parallel()
+
+	planningID := uuid.New()
+	actorUserID := uuid.New()
+	routeCreatorID := uuid.New()
+	routeStopID := uuid.New()
+	repo := newFakeRepository()
+	membership := &fakeMembership{
+		members: map[uuid.UUID]plannings.PlanningMember{
+			actorUserID: {PlanningID: planningID, UserID: actorUserID, Role: plannings.RoleMember},
+		},
+		routeStopCreators: map[uuid.UUID]uuid.UUID{routeStopID: routeCreatorID},
+	}
+	service := NewService(repo, membership)
+
+	_, err := service.CreateBooking(context.Background(), actorUserID, planningID, CreateBookingInput{
+		Title: "Hotel Central", Type: TypeHotel, Status: StatusProposal, RouteStopID: &routeStopID,
+	})
+
+	require.ErrorIs(t, err, ErrForbidden)
+	require.Zero(t, repo.createCalls)
+}
+
 func TestServiceUpdateBookingBlocksOtherMembers(t *testing.T) {
 	t.Parallel()
 
@@ -205,6 +266,123 @@ func TestServiceUpdateBookingAllowsAdmin(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.updateCalls)
+}
+
+func TestServiceUpdateBookingAllowsRouteStopCreatorToAssociateBooking(t *testing.T) {
+	t.Parallel()
+
+	planningID := uuid.New()
+	bookingCreatorID := uuid.New()
+	stopCreatorID := uuid.New()
+	routeStopID := uuid.New()
+	repo := newFakeRepository()
+	booking, _ := repo.CreateBooking(context.Background(), bookingCreatorID, planningID, CreateBookingInput{Title: "Hotel Central", Type: TypeHotel, Status: StatusProposal})
+	membership := &fakeMembership{
+		members: map[uuid.UUID]plannings.PlanningMember{
+			bookingCreatorID: {PlanningID: planningID, UserID: bookingCreatorID, Role: plannings.RoleMember},
+			stopCreatorID:    {PlanningID: planningID, UserID: stopCreatorID, Role: plannings.RoleMember},
+		},
+		routeStopCreators: map[uuid.UUID]uuid.UUID{routeStopID: stopCreatorID},
+	}
+	service := NewService(repo, membership)
+
+	updated, err := service.UpdateBooking(context.Background(), stopCreatorID, planningID, booking.ID, UpdateBookingInput{
+		RouteStopID:    &routeStopID,
+		RouteStopIDSet: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, &routeStopID, updated.RouteStopID)
+	require.Equal(t, 1, repo.updateCalls)
+}
+
+func TestServiceUpdateBookingAllowsRouteStopCreatorToDisassociateBooking(t *testing.T) {
+	t.Parallel()
+
+	planningID := uuid.New()
+	bookingCreatorID := uuid.New()
+	stopCreatorID := uuid.New()
+	routeStopID := uuid.New()
+	repo := newFakeRepository()
+	booking, _ := repo.CreateBooking(context.Background(), bookingCreatorID, planningID, CreateBookingInput{Title: "Hotel Central", Type: TypeHotel, Status: StatusProposal})
+	booking.RouteStopID = &routeStopID
+	repo.bookings[booking.ID] = booking
+	membership := &fakeMembership{
+		members: map[uuid.UUID]plannings.PlanningMember{
+			bookingCreatorID: {PlanningID: planningID, UserID: bookingCreatorID, Role: plannings.RoleMember},
+			stopCreatorID:    {PlanningID: planningID, UserID: stopCreatorID, Role: plannings.RoleMember},
+		},
+		routeStopCreators: map[uuid.UUID]uuid.UUID{routeStopID: stopCreatorID},
+	}
+	service := NewService(repo, membership)
+
+	updated, err := service.UpdateBooking(context.Background(), stopCreatorID, planningID, booking.ID, UpdateBookingInput{RouteStopIDSet: true})
+
+	require.NoError(t, err)
+	require.Nil(t, updated.RouteStopID)
+	require.Equal(t, 1, repo.updateCalls)
+}
+
+func TestServiceUpdateBookingBlocksUnrelatedMemberFromAssociation(t *testing.T) {
+	t.Parallel()
+
+	planningID := uuid.New()
+	bookingCreatorID := uuid.New()
+	otherMemberID := uuid.New()
+	stopCreatorID := uuid.New()
+	routeStopID := uuid.New()
+	repo := newFakeRepository()
+	booking, _ := repo.CreateBooking(context.Background(), bookingCreatorID, planningID, CreateBookingInput{Title: "Hotel Central", Type: TypeHotel, Status: StatusProposal})
+	membership := &fakeMembership{
+		members: map[uuid.UUID]plannings.PlanningMember{
+			bookingCreatorID: {PlanningID: planningID, UserID: bookingCreatorID, Role: plannings.RoleMember},
+			otherMemberID:    {PlanningID: planningID, UserID: otherMemberID, Role: plannings.RoleMember},
+		},
+		routeStopCreators: map[uuid.UUID]uuid.UUID{routeStopID: stopCreatorID},
+	}
+	service := NewService(repo, membership)
+
+	_, err := service.UpdateBooking(context.Background(), otherMemberID, planningID, booking.ID, UpdateBookingInput{
+		RouteStopID:    &routeStopID,
+		RouteStopIDSet: true,
+	})
+
+	require.ErrorIs(t, err, ErrForbidden)
+	require.Zero(t, repo.updateCalls)
+}
+
+func TestServiceUpdateBookingCannotMoveBookingFromAnotherMembersStop(t *testing.T) {
+	t.Parallel()
+
+	planningID := uuid.New()
+	bookingCreatorID := uuid.New()
+	stopCreatorID := uuid.New()
+	otherStopCreatorID := uuid.New()
+	currentStopID := uuid.New()
+	nextStopID := uuid.New()
+	repo := newFakeRepository()
+	booking, _ := repo.CreateBooking(context.Background(), bookingCreatorID, planningID, CreateBookingInput{Title: "Hotel Central", Type: TypeHotel, Status: StatusProposal})
+	booking.RouteStopID = &currentStopID
+	repo.bookings[booking.ID] = booking
+	membership := &fakeMembership{
+		members: map[uuid.UUID]plannings.PlanningMember{
+			bookingCreatorID: {PlanningID: planningID, UserID: bookingCreatorID, Role: plannings.RoleMember},
+			stopCreatorID:    {PlanningID: planningID, UserID: stopCreatorID, Role: plannings.RoleMember},
+		},
+		routeStopCreators: map[uuid.UUID]uuid.UUID{
+			currentStopID: otherStopCreatorID,
+			nextStopID:    stopCreatorID,
+		},
+	}
+	service := NewService(repo, membership)
+
+	_, err := service.UpdateBooking(context.Background(), stopCreatorID, planningID, booking.ID, UpdateBookingInput{
+		RouteStopID:    &nextStopID,
+		RouteStopIDSet: true,
+	})
+
+	require.ErrorIs(t, err, ErrForbidden)
+	require.Zero(t, repo.updateCalls)
 }
 
 func TestServiceConfirmBookingTransitionsStatus(t *testing.T) {

@@ -55,7 +55,8 @@ func (r *PostgresRepository) Create(ctx context.Context, actor, planning uuid.UU
 		return Flight{}, err
 	}
 	cost, currency, distribution := input.CostCents, input.Currency, input.CostDistribution
-	if err = syncExpense(ctx, tx, flight, actor, &cost, &currency, &distribution, true); err != nil {
+	payments := input.Payments
+	if err = syncExpense(ctx, tx, flight, actor, &cost, &currency, &distribution, &payments); err != nil {
 		return Flight{}, err
 	}
 	if err = applyCosts(ctx, tx, []*Flight{&flight}); err != nil {
@@ -68,15 +69,12 @@ func (r *PostgresRepository) Create(ctx context.Context, actor, planning uuid.UU
 }
 
 // syncExpense pushes the flight cost into the shared expense model; the creator is the default payer.
-func syncExpense(ctx context.Context, q queryer, flight Flight, actor uuid.UUID, cost *int64, currency, distribution *string, defaultPayer bool) error {
+func syncExpense(ctx context.Context, q queryer, flight Flight, actor uuid.UUID, cost *int64, currency, distribution *string, payments *[]Payment) error {
 	sync := expenseledger.ItemSync{
 		PlanningID: flight.PlanningID, PlanningItemID: flight.PlanningItemID, ActorUserID: actor,
 		Title: ExpenseTitle(flight), Category: "flight", SpentAt: ExpenseDate(flight),
 		AmountCents: cost, Currency: currency, Distribution: distribution,
-		ParticipantUserIDs: flight.ParticipantUserIDs, FollowAmount: true,
-	}
-	if defaultPayer {
-		sync.DefaultPayerUserID = &flight.CreatedByUserID
+		ParticipantUserIDs: flight.ParticipantUserIDs, Payments: payments,
 	}
 	return expenseledger.SyncItemExpense(ctx, q, sync)
 }
@@ -114,6 +112,10 @@ func applyCosts(ctx context.Context, q queryer, flights []*Flight) error {
 		flight.Currency, flight.CostDistribution, flight.CostCents = expenseledger.DefaultCurrency, DistributionGroup, 0
 		if cost, ok := costs[flight.PlanningItemID]; ok {
 			flight.CostCents, flight.Currency, flight.CostDistribution = cost.AmountCents, cost.Currency, cost.Distribution
+			flight.Payments = cost.Payments
+		}
+		if flight.Payments == nil {
+			flight.Payments = []Payment{}
 		}
 	}
 	return nil
@@ -225,7 +227,7 @@ func (r *PostgresRepository) Update(ctx context.Context, planning, id uuid.UUID,
 	if err != nil {
 		return Flight{}, err
 	}
-	if err = syncExpense(ctx, tx, flight, flight.CreatedByUserID, input.CostCents, input.Currency, input.CostDistribution, true); err != nil {
+	if err = syncExpense(ctx, tx, flight, flight.CreatedByUserID, input.CostCents, input.Currency, input.CostDistribution, input.Payments); err != nil {
 		return Flight{}, err
 	}
 	if err = applyCosts(ctx, tx, []*Flight{&flight}); err != nil {

@@ -1,6 +1,8 @@
 package bookings
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"net/url"
@@ -92,6 +94,10 @@ func validateCreateBookingRequest(request CreateBookingRequest) (CreateBookingIn
 
 func validateUpdateBookingRequest(request UpdateBookingRequest) (UpdateBookingInput, error) {
 	details := make([]response.ErrorDetail, 0)
+	routeStopID, routeStopIDSet, routeStopIDErr := parseNullableRouteStopID(request.RouteStopID)
+	if routeStopIDErr != nil {
+		details = append(details, response.ErrorDetail{Field: "route_stop_id", Message: routeStopIDErr.Error()})
+	}
 
 	title := trimOptionalString(request.Title)
 	if title != nil && *title == "" {
@@ -165,8 +171,23 @@ func validateUpdateBookingRequest(request UpdateBookingRequest) (UpdateBookingIn
 		OccursAt:    occursAt,
 		Location:    trimOptionalString(request.Location),
 		Notes:       trimOptionalString(request.Notes),
-		CostCents:   request.CostCents, CostDistribution: request.CostDistribution, ParticipantUserIDs: request.ParticipantUserIDs, RouteStopID: request.RouteStopID, Payments: payments,
+		CostCents:   request.CostCents, CostDistribution: request.CostDistribution, ParticipantUserIDs: request.ParticipantUserIDs, RouteStopID: routeStopID, RouteStopIDSet: routeStopIDSet, Payments: payments,
 	}, nil
+}
+
+func parseNullableRouteStopID(raw json.RawMessage) (*uuid.UUID, bool, error) {
+	if raw == nil {
+		return nil, false, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, true, nil
+	}
+
+	var routeStopID uuid.UUID
+	if err := json.Unmarshal(raw, &routeStopID); err != nil {
+		return nil, true, fmt.Errorf("route_stop_id must be a UUID or null")
+	}
+	return &routeStopID, true, nil
 }
 
 func validatePayments(requests []PaymentRequest) ([]Payment, []response.ErrorDetail) {

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
@@ -37,7 +38,7 @@ type Repository interface {
 	CreatePlanningRouteDay(ctx context.Context, planningID uuid.UUID, input CreatePlanningRouteDayInput) (PlanningItineraryDay, error)
 	DeletePlanningRouteDay(ctx context.Context, planningID uuid.UUID, dayID uuid.UUID) error
 	GetPlanningRouteByID(ctx context.Context, planningID uuid.UUID, routeID uuid.UUID) (PlanningItineraryStop, error)
-	CreatePlanningRouteStop(ctx context.Context, planningID uuid.UUID, input CreatePlanningRouteStopInput) (PlanningItineraryStop, error)
+	CreatePlanningRouteStop(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input CreatePlanningRouteStopInput) (PlanningItineraryStop, error)
 	UpdatePlanningRouteStop(ctx context.Context, planningID uuid.UUID, routeID uuid.UUID, input UpdatePlanningRouteStopInput) (PlanningItineraryStop, error)
 	DeletePlanningRouteStop(ctx context.Context, planningID uuid.UUID, routeID uuid.UUID) error
 	ReorderPlanningRouteStops(ctx context.Context, planningID uuid.UUID, dayID uuid.UUID, stopIDs []uuid.UUID) error
@@ -171,8 +172,8 @@ func (r *PostgresRepository) GetDashboardActivity(ctx context.Context, planningI
 	activity := PlanningDashboardActivity{PlanningID: planningID}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT s.id, s.title, s.description, s.address, s.time_label, s.image_url, s.category,
-			s.sort_order, d.sort_order, s.created_at, p.starts_at
+		SELECT s.id, s.title, s.description, s.address, s.time_label, d.date_label, d.sort_order, s.image_url, s.category,
+			s.sort_order, s.created_at, p.starts_at
 		FROM public.planning_route_stops s
 		JOIN public.planning_route_days d ON d.id = s.day_id AND d.planning_id = s.planning_id
 		JOIN public.plannings p ON p.id = s.planning_id
@@ -191,6 +192,7 @@ func (r *PostgresRepository) GetDashboardActivity(ctx context.Context, planningI
 			description      string
 			address          string
 			timeLabel        string
+			dateLabel        string
 			imageURL         *string
 			category         string
 			stopSortOrder    int
@@ -204,10 +206,11 @@ func (r *PostgresRepository) GetDashboardActivity(ctx context.Context, planningI
 			&description,
 			&address,
 			&timeLabel,
+			&dateLabel,
+			&daySortOrder,
 			&imageURL,
 			&category,
 			&stopSortOrder,
-			&daySortOrder,
 			&createdAt,
 			&planningStartsAt,
 		); scanErr != nil {
@@ -215,7 +218,7 @@ func (r *PostgresRepository) GetDashboardActivity(ctx context.Context, planningI
 		}
 		_ = stopSortOrder
 
-		startsAt := routeStopStartsAt(planningStartsAt, daySortOrder, timeLabel, createdAt)
+		startsAt := routeStopStartsAt(dateLabel, planningStartsAt, daySortOrder, timeLabel, createdAt)
 
 		activity.UpcomingActivities = append(activity.UpcomingActivities, PlanningUpcomingActivity{
 			ID:        id,
@@ -244,18 +247,123 @@ func (r *PostgresRepository) GetDashboardActivity(ctx context.Context, planningI
 	return activity, nil
 }
 
-func routeStopStartsAt(planningStartsAt *time.Time, daySortOrder int, timeLabel string, fallback time.Time) time.Time {
+func routeStopStartsAt(dateLabel string, planningStartsAt *time.Time, daySortOrder int, timeLabel string, fallback time.Time) string {
 	base := fallback
 	if planningStartsAt != nil {
 		base = planningStartsAt.AddDate(0, 0, daySortOrder)
 	}
+	if parsedDate, ok := resolveRouteDayDate(dateLabel, planningStartsAt); ok {
+		base = parsedDate
+	}
 
 	parsedTime, err := time.Parse("15:04", strings.TrimSpace(timeLabel))
 	if err != nil {
-		return base
+		return base.Format("2006-01-02") + "T00:00"
 	}
 
-	return time.Date(base.Year(), base.Month(), base.Day(), parsedTime.Hour(), parsedTime.Minute(), 0, 0, base.Location())
+	return fmt.Sprintf("%sT%02d:%02d", base.Format("2006-01-02"), parsedTime.Hour(), parsedTime.Minute())
+}
+
+func parseRouteCalendarDate(value string) (time.Time, bool) {
+	date, err := time.Parse("2006-01-02", value)
+	return date, err == nil && date.Format("2006-01-02") == value
+}
+
+func resolveRouteDayDate(value string, reference *time.Time) (time.Time, bool) {
+	if date, ok := parseRouteCalendarDate(value); ok {
+		return date, true
+	}
+	parts := strings.Fields(strings.TrimSuffix(strings.ToLower(value), "."))
+	if len(parts) < 2 || len(parts) > 3 {
+		return time.Time{}, false
+	}
+	var day int
+	if _, err := fmt.Sscanf(parts[0], "%d", &day); err != nil {
+		return time.Time{}, false
+	}
+	months := map[string]time.Month{
+		"ene": time.January, "enero": time.January,
+		"feb": time.February, "febrero": time.February,
+		"mar": time.March, "marzo": time.March,
+		"abr": time.April, "abril": time.April,
+		"may": time.May, "mayo": time.May,
+		"jun": time.June, "junio": time.June,
+		"jul": time.July, "julio": time.July,
+		"ago": time.August, "agosto": time.August,
+		"sep": time.September, "sept": time.September, "septiembre": time.September,
+		"set": time.September, "oct": time.October, "octubre": time.October,
+		"nov": time.November, "noviembre": time.November,
+		"dic": time.December, "diciembre": time.December,
+	}
+	month, ok := months[parts[1]]
+	if !ok {
+		return time.Time{}, false
+	}
+	year := 0
+	if len(parts) == 3 {
+		if _, err := fmt.Sscanf(parts[2], "%d", &year); err != nil {
+			return time.Time{}, false
+		}
+	} else if reference != nil {
+		year = reference.Year()
+		if reference.Month() >= time.October && month <= time.February {
+			year++
+		} else if reference.Month() <= time.February && month >= time.October {
+			year--
+		}
+	}
+	if year == 0 {
+		return time.Time{}, false
+	}
+	date := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	return date, date.Year() == year && date.Month() == month && date.Day() == day
+}
+
+func normalizeLegacyRouteDayDates(ctx context.Context, tx pgx.Tx, planningID uuid.UUID, reference *time.Time) error {
+	rows, err := tx.Query(ctx, `
+		SELECT id, date_label
+		FROM public.planning_route_days
+		WHERE planning_id = $1
+		FOR UPDATE
+	`, planningID)
+	if err != nil {
+		return err
+	}
+	type dayDate struct {
+		id        uuid.UUID
+		dateLabel string
+	}
+	days := []dayDate{}
+	for rows.Next() {
+		var day dayDate
+		if err := rows.Scan(&day.id, &day.dateLabel); err != nil {
+			rows.Close()
+			return err
+		}
+		days = append(days, day)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, day := range days {
+		if _, ok := parseRouteCalendarDate(day.dateLabel); ok {
+			continue
+		}
+		date, ok := resolveRouteDayDate(day.dateLabel, reference)
+		if !ok {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE public.planning_route_days
+			SET date_label = $3
+			WHERE planning_id = $1 AND id = $2
+		`, planningID, day.id, date.Format("2006-01-02")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func planningStringPointer(value string) *string {
@@ -617,8 +725,9 @@ func (r *PostgresRepository) ListActivity(ctx context.Context, planningID uuid.U
 func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningID uuid.UUID) (PlanningItinerary, error) {
 	itinerary := PlanningItinerary{PlanningID: planningID}
 
-	planningRow := r.pool.QueryRow(ctx, `SELECT name FROM public.plannings WHERE id = $1`, planningID)
-	if err := planningRow.Scan(&itinerary.PlanningName); err != nil {
+	var planningStartsAt *time.Time
+	planningRow := r.pool.QueryRow(ctx, `SELECT name, starts_at FROM public.plannings WHERE id = $1`, planningID)
+	if err := planningRow.Scan(&itinerary.PlanningName, &planningStartsAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PlanningItinerary{}, ErrPlanningNotFound
 		}
@@ -626,7 +735,7 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 	}
 
 	dayRows, err := r.pool.Query(ctx, `
-		SELECT id, label, date_label
+		SELECT id, label, date_label, sort_order
 		FROM public.planning_route_days
 		WHERE planning_id = $1
 		ORDER BY sort_order ASC, created_at ASC
@@ -638,12 +747,18 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 
 	for dayRows.Next() {
 		day := PlanningItineraryDay{}
-		if err := dayRows.Scan(&day.ID, &day.Label, &day.DateLabel); err != nil {
+		var daySortOrder int
+		if err := dayRows.Scan(&day.ID, &day.Label, &day.DateLabel, &daySortOrder); err != nil {
 			return PlanningItinerary{}, err
+		}
+		if resolvedDate, isCalendarDate := resolveRouteDayDate(day.DateLabel, planningStartsAt); isCalendarDate {
+			day.DateLabel = resolvedDate.Format("2006-01-02")
+		} else if planningStartsAt != nil {
+			day.DateLabel = planningStartsAt.AddDate(0, 0, daySortOrder).Format("2006-01-02")
 		}
 
 		stopRows, err := r.pool.Query(ctx, `
-			SELECT id, title, description, address, time_label, duration_minutes, notes, cost_estimate, currency, external_url, image_url, status, category, is_optional, latitude, longitude
+			SELECT id, title, description, address, time_label, duration_minutes, notes, cost_estimate, currency, external_url, image_url, status, category, is_optional, latitude, longitude, created_by_user_id
 			FROM public.planning_route_stops
 			WHERE planning_id = $1 AND day_id = $2
 			ORDER BY sort_order ASC, created_at ASC
@@ -655,6 +770,7 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 		for stopRows.Next() {
 			stop := PlanningItineraryStop{}
 			var imageURL *string
+			var createdByUserID pgtype.UUID
 			if err := stopRows.Scan(
 				&stop.ID,
 				&stop.Title,
@@ -672,11 +788,13 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 				&stop.IsOptional,
 				&stop.Coordinates.Latitude,
 				&stop.Coordinates.Longitude,
+				&createdByUserID,
 			); err != nil {
 				stopRows.Close()
 				return PlanningItinerary{}, err
 			}
 			stop.ImageURL = imageURL
+			stop.CreatedByUserID = uuidPointer(createdByUserID)
 			stop.Bookings, err = r.listRouteStopBookings(ctx, stop.ID)
 			if err != nil {
 				stopRows.Close()
@@ -700,8 +818,50 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 }
 
 func (r *PostgresRepository) CreatePlanningRouteDay(ctx context.Context, planningID uuid.UUID, input CreatePlanningRouteDayInput) (PlanningItineraryDay, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return PlanningItineraryDay{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var startsAt, endsAt *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT starts_at, ends_at
+		FROM public.plannings
+		WHERE id = $1
+		FOR UPDATE
+	`, planningID).Scan(&startsAt, &endsAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PlanningItineraryDay{}, ErrPlanningNotFound
+	}
+	if err != nil {
+		return PlanningItineraryDay{}, err
+	}
+
+	calendarDate, isCalendarDate := parseRouteCalendarDate(input.DateLabel)
+	if isCalendarDate {
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM public.planning_route_days
+				WHERE planning_id = $1 AND date_label = $2
+			)
+		`, planningID, input.DateLabel).Scan(&exists); err != nil {
+			return PlanningItineraryDay{}, err
+		}
+		if exists {
+			return PlanningItineraryDay{}, ErrConflict
+		}
+		if startsAt != nil {
+			if err := normalizeLegacyRouteDayDates(ctx, tx, planningID, startsAt); err != nil {
+				return PlanningItineraryDay{}, err
+			}
+		}
+	}
+
 	day := PlanningItineraryDay{}
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		WITH next_order AS (
 			SELECT COALESCE(MAX(sort_order), -1) + 1 AS value
 			FROM public.planning_route_days
@@ -712,6 +872,25 @@ func (r *PostgresRepository) CreatePlanningRouteDay(ctx context.Context, plannin
 		RETURNING id, label, date_label
 	`, planningID, input.Label, input.DateLabel).Scan(&day.ID, &day.Label, &day.DateLabel)
 	if err != nil {
+		return PlanningItineraryDay{}, err
+	}
+	if isCalendarDate {
+		dateOnly := calendarDate.UTC()
+		if startsAt == nil || startsAt.UTC().Format("2006-01-02") > input.DateLabel {
+			startsAt = &dateOnly
+		}
+		if endsAt == nil || endsAt.UTC().Format("2006-01-02") < input.DateLabel {
+			endsAt = &dateOnly
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE public.plannings
+			SET starts_at = $2, ends_at = $3, updated_at = now()
+			WHERE id = $1
+		`, planningID, startsAt, endsAt); err != nil {
+			return PlanningItineraryDay{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return PlanningItineraryDay{}, err
 	}
 
@@ -758,8 +937,9 @@ func (r *PostgresRepository) DeletePlanningRouteDay(ctx context.Context, plannin
 func (r *PostgresRepository) GetPlanningRouteByID(ctx context.Context, planningID uuid.UUID, routeID uuid.UUID) (PlanningItineraryStop, error) {
 	stop := PlanningItineraryStop{}
 	var imageURL *string
+	var createdByUserID pgtype.UUID
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, title, description, address, time_label, duration_minutes, notes, cost_estimate, currency, external_url, image_url, status, category, is_optional, latitude, longitude
+		SELECT id, title, description, address, time_label, duration_minutes, notes, cost_estimate, currency, external_url, image_url, status, category, is_optional, latitude, longitude, created_by_user_id
 		FROM public.planning_route_stops
 		WHERE planning_id = $1 AND id = $2
 	`, planningID, routeID).Scan(
@@ -779,6 +959,7 @@ func (r *PostgresRepository) GetPlanningRouteByID(ctx context.Context, planningI
 		&stop.IsOptional,
 		&stop.Coordinates.Latitude,
 		&stop.Coordinates.Longitude,
+		&createdByUserID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -787,11 +968,31 @@ func (r *PostgresRepository) GetPlanningRouteByID(ctx context.Context, planningI
 		return PlanningItineraryStop{}, err
 	}
 	stop.ImageURL = imageURL
+	stop.CreatedByUserID = uuidPointer(createdByUserID)
 	stop.Bookings, err = r.listRouteStopBookings(ctx, stop.ID)
 	if err != nil {
 		return PlanningItineraryStop{}, err
 	}
 	return stop, nil
+}
+
+func (r *PostgresRepository) GetPlanningRouteStopCreator(ctx context.Context, planningID uuid.UUID, routeID uuid.UUID) (uuid.UUID, error) {
+	var createdByUserID pgtype.UUID
+	err := r.pool.QueryRow(ctx, `
+		SELECT created_by_user_id
+		FROM public.planning_route_stops
+		WHERE planning_id = $1 AND id = $2
+	`, planningID, routeID).Scan(&createdByUserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrPlanningNotFound
+		}
+		return uuid.Nil, err
+	}
+	if !createdByUserID.Valid {
+		return uuid.Nil, nil
+	}
+	return uuid.UUID(createdByUserID.Bytes), nil
 }
 
 func (r *PostgresRepository) listRouteStopBookings(ctx context.Context, stopID uuid.UUID) ([]PlanningRouteBooking, error) {
@@ -816,13 +1017,14 @@ func (r *PostgresRepository) listRouteStopBookings(ctx context.Context, stopID u
 	return bookings, rows.Err()
 }
 
-func (r *PostgresRepository) CreatePlanningRouteStop(ctx context.Context, planningID uuid.UUID, input CreatePlanningRouteStopInput) (PlanningItineraryStop, error) {
+func (r *PostgresRepository) CreatePlanningRouteStop(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input CreatePlanningRouteStopInput) (PlanningItineraryStop, error) {
 	if err := r.assertRouteDayBelongsToPlanning(ctx, planningID, input.DayID); err != nil {
 		return PlanningItineraryStop{}, err
 	}
 
 	stop := PlanningItineraryStop{}
 	var imageURL *string
+	var createdByUserID uuid.UUID
 	err := r.pool.QueryRow(ctx, `
 		WITH next_order AS (
 			SELECT COALESCE(MAX(sort_order), -1) + 1 AS value
@@ -832,15 +1034,15 @@ func (r *PostgresRepository) CreatePlanningRouteStop(ctx context.Context, planni
 		INSERT INTO public.planning_route_stops (
 			id, planning_id, day_id, title, description, address, time_label, duration_minutes,
 			notes, cost_estimate, currency, external_url, image_url, status, category, is_optional,
-			latitude, longitude, sort_order
+			latitude, longitude, sort_order, created_by_user_id
 		)
 		VALUES (
 			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
 			$8, $9, $10, $11, $12, $13, $14, $15,
-			$16, $17, (SELECT value FROM next_order)
+			$16, $17, (SELECT value FROM next_order), $18
 		)
 		RETURNING id, title, description, address, time_label, duration_minutes, notes, cost_estimate, currency,
-			external_url, image_url, status, category, is_optional, latitude, longitude
+			external_url, image_url, status, category, is_optional, latitude, longitude, created_by_user_id
 	`,
 		planningID,
 		input.DayID,
@@ -859,6 +1061,7 @@ func (r *PostgresRepository) CreatePlanningRouteStop(ctx context.Context, planni
 		input.IsOptional,
 		input.Coordinates.Latitude,
 		input.Coordinates.Longitude,
+		actorUserID,
 	).Scan(
 		&stop.ID,
 		&stop.Title,
@@ -876,12 +1079,14 @@ func (r *PostgresRepository) CreatePlanningRouteStop(ctx context.Context, planni
 		&stop.IsOptional,
 		&stop.Coordinates.Latitude,
 		&stop.Coordinates.Longitude,
+		&createdByUserID,
 	)
 	if err != nil {
 		return PlanningItineraryStop{}, err
 	}
 
 	stop.ImageURL = imageURL
+	stop.CreatedByUserID = &createdByUserID
 	return stop, nil
 }
 
@@ -1016,6 +1221,7 @@ func (r *PostgresRepository) UpdatePlanningRouteStop(ctx context.Context, planni
 	}
 
 	updatedStop.ImageURL = updatedImageURL
+	updatedStop.CreatedByUserID = mutableStop.CreatedByUserID
 	return updatedStop, nil
 }
 
@@ -1099,9 +1305,10 @@ type planningMutableRouteStop struct {
 func (r *PostgresRepository) getMutablePlanningRouteStop(ctx context.Context, planningID uuid.UUID, routeID uuid.UUID) (planningMutableRouteStop, error) {
 	stop := planningMutableRouteStop{}
 	var imageURL *string
+	var createdByUserID pgtype.UUID
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, day_id, title, description, address, time_label, duration_minutes, notes, cost_estimate,
-			currency, external_url, image_url, status, category, is_optional, latitude, longitude
+			currency, external_url, image_url, status, category, is_optional, latitude, longitude, created_by_user_id
 		FROM public.planning_route_stops
 		WHERE planning_id = $1 AND id = $2
 	`, planningID, routeID).Scan(
@@ -1122,6 +1329,7 @@ func (r *PostgresRepository) getMutablePlanningRouteStop(ctx context.Context, pl
 		&stop.IsOptional,
 		&stop.Coordinates.Latitude,
 		&stop.Coordinates.Longitude,
+		&createdByUserID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1131,7 +1339,16 @@ func (r *PostgresRepository) getMutablePlanningRouteStop(ctx context.Context, pl
 	}
 
 	stop.ImageURL = imageURL
+	stop.CreatedByUserID = uuidPointer(createdByUserID)
 	return stop, nil
+}
+
+func uuidPointer(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	id := uuid.UUID(value.Bytes)
+	return &id
 }
 
 func (r *PostgresRepository) assertRouteDayBelongsToPlanning(ctx context.Context, planningID uuid.UUID, dayID uuid.UUID) error {

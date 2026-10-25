@@ -31,8 +31,22 @@ func validateInput(input CreateInput) error {
 	if err := validateParticipantIDs(input.ParticipantUserIDs); err != nil {
 		details = append(details, response.ErrorDetail{Field: "participant_user_ids", Message: err.Error()})
 	}
+	if err := validatePayments(input.CostCents, input.Payments); err != nil {
+		details = append(details, response.ErrorDetail{Field: "payments", Message: err.Error()})
+	}
 	if len(details) > 0 {
 		return newValidationError(details)
+	}
+	return nil
+}
+
+func validatePayments(costCents int64, payments []Payment) error {
+	var total int64
+	for _, payment := range payments {
+		if payment.UserID == uuid.Nil || payment.AmountCents <= 0 || payment.AmountCents > costCents-total {
+			return fmt.Errorf("payments must have valid members and positive amounts not exceeding the flight cost")
+		}
+		total += payment.AmountCents
 	}
 	return nil
 }

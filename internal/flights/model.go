@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
 	"github.com/google/uuid"
 )
@@ -42,6 +43,8 @@ type Segment struct {
 	DestinationTimezone    *string
 }
 
+type Payment = expenseledger.Payment
+
 type Flight struct {
 	ID              uuid.UUID
 	PlanningID      uuid.UUID
@@ -60,6 +63,7 @@ type Flight struct {
 	Currency           string
 	CostDistribution   string
 	ParticipantUserIDs []uuid.UUID
+	Payments           []Payment
 	Segments           []Segment
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -78,6 +82,7 @@ type CreateInput struct {
 	Currency           string
 	CostDistribution   string
 	ParticipantUserIDs []uuid.UUID
+	Payments           []Payment
 	Segments           []Segment
 }
 
@@ -94,6 +99,7 @@ type UpdateInput struct {
 	Currency           *string
 	CostDistribution   *string
 	ParticipantUserIDs *[]uuid.UUID
+	Payments           *[]Payment
 	Segments           *[]Segment
 }
 

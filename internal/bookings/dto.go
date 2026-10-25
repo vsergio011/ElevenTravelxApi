@@ -1,6 +1,7 @@
 package bookings
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,7 +33,7 @@ type UpdateBookingRequest struct {
 	CostCents          *int64            `json:"cost_cents"`
 	CostDistribution   *string           `json:"cost_distribution"`
 	ParticipantUserIDs *[]uuid.UUID      `json:"participant_user_ids"`
-	RouteStopID        *uuid.UUID        `json:"route_stop_id"`
+	RouteStopID        json.RawMessage   `json:"route_stop_id"`
 	Payments           *[]PaymentRequest `json:"payments"`
 }
 

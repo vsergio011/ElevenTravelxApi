@@ -3,6 +3,7 @@ package plannings
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -179,6 +180,11 @@ func (s *Service) CreatePlanningRouteDay(ctx context.Context, actorUserID uuid.U
 	if input.Label == "" || input.DateLabel == "" {
 		return PlanningItineraryDay{}, ValidationError{}
 	}
+	if len(input.DateLabel) == len("2006-01-02") && input.DateLabel[4] == '-' && input.DateLabel[7] == '-' {
+		if _, err := time.Parse("2006-01-02", input.DateLabel); err != nil {
+			return PlanningItineraryDay{}, ValidationError{}
+		}
+	}
 
 	return s.repository.CreatePlanningRouteDay(ctx, planningID, input)
 }
@@ -204,7 +210,7 @@ func (s *Service) CreatePlanningRouteStop(ctx context.Context, actorUserID uuid.
 		return PlanningItineraryStop{}, err
 	}
 
-	return s.repository.CreatePlanningRouteStop(ctx, planningID, input)
+	return s.repository.CreatePlanningRouteStop(ctx, actorUserID, planningID, input)
 }
 
 func (s *Service) UpdatePlanningRouteStop(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, routeID uuid.UUID, input UpdatePlanningRouteStopInput) (PlanningItineraryStop, error) {

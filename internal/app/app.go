@@ -43,7 +43,7 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	flightRepository := flights.NewPostgresRepository(pool)
 	flightLookup := flights.NewAeroDataBoxClient(cfg.AeroDataBoxAPIKey, cfg.AeroDataBoxHost)
 	flightService := flights.NewService(flightRepository, planningRepository, flightLookup)
-	bookingService := bookings.NewService(bookingRepository, planningRepository, flightService)
+	bookingService := bookings.NewService(bookingRepository, planningRepository)
 	bookingHandler := bookings.NewHandler(bookingService)
 	flightHandler := flights.NewHandler(flightService)
 	checklistRepository := checklists.NewPostgresRepository(pool)

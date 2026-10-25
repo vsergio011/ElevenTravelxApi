@@ -3,8 +3,20 @@ package flights
 import (
 	"time"
 
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 	"github.com/google/uuid"
 )
+
+type PaymentRequest struct {
+	UserID      uuid.UUID `json:"user_id"`
+	AmountCents int64     `json:"amount_cents"`
+}
+
+type PaymentResponse struct {
+	UserID      uuid.UUID `json:"user_id"`
+	AmountCents int64     `json:"amount_cents"`
+	PaidAt      time.Time `json:"paid_at"`
+}
 
 type SegmentRequest struct {
 	Direction              string    `json:"direction"`
@@ -42,6 +54,7 @@ type CreateRequest struct {
 	Currency           *string          `json:"currency"`
 	CostDistribution   *string          `json:"cost_distribution"`
 	ParticipantUserIDs []uuid.UUID      `json:"participant_user_ids"`
+	Payments           []PaymentRequest `json:"payments"`
 	Segments           []SegmentRequest `json:"segments"`
 }
 type UpdateRequest struct {
@@ -57,6 +70,7 @@ type UpdateRequest struct {
 	Currency           *string           `json:"currency"`
 	CostDistribution   *string           `json:"cost_distribution"`
 	ParticipantUserIDs *[]uuid.UUID      `json:"participant_user_ids"`
+	Payments           *[]PaymentRequest `json:"payments"`
 	Segments           *[]SegmentRequest `json:"segments"`
 }
 
@@ -80,6 +94,7 @@ type FlightResponse struct {
 	Currency           string            `json:"currency"`
 	CostDistribution   string            `json:"cost_distribution"`
 	ParticipantUserIDs []uuid.UUID       `json:"participant_user_ids"`
+	Payments           []PaymentResponse `json:"payments"`
 	Segments           []SegmentResponse `json:"segments"`
 	CreatedAt          time.Time         `json:"created_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`
@@ -95,10 +110,23 @@ func toSegments(input []SegmentRequest) []Segment {
 	}
 	return result
 }
+
+func toPayments(input []PaymentRequest) []expenseledger.Payment {
+	result := make([]expenseledger.Payment, len(input))
+	for index, payment := range input {
+		result[index] = expenseledger.Payment{UserID: payment.UserID, AmountCents: payment.AmountCents}
+	}
+	return result
+}
+
 func toResponse(flight Flight) FlightResponse {
 	segments := make([]SegmentResponse, len(flight.Segments))
 	for i, item := range flight.Segments {
 		segments[i] = SegmentResponse{ID: item.ID, SegmentRequest: SegmentRequest{Direction: item.Direction, Position: item.Position, OriginLabel: item.OriginLabel, OriginCity: item.OriginCity, OriginAirportName: item.OriginAirportName, OriginAirportCode: item.OriginAirportCode, OriginMapboxID: item.OriginMapboxID, DestinationLabel: item.DestinationLabel, DestinationCity: item.DestinationCity, DestinationAirportName: item.DestinationAirportName, DestinationAirportCode: item.DestinationAirportCode, DestinationMapboxID: item.DestinationMapboxID, DepartureAt: item.DepartureAt, ArrivalAt: item.ArrivalAt, DepartureTerminal: item.DepartureTerminal, ArrivalTerminal: item.ArrivalTerminal, Airline: item.Airline, FlightNumber: item.FlightNumber, OriginTimezone: item.OriginTimezone, DestinationTimezone: item.DestinationTimezone}}
 	}
-	return FlightResponse{ID: flight.ID, PlanningID: flight.PlanningID, CreatedByUserID: flight.CreatedByUserID, Status: flight.Status, Airline: flight.Airline, FlightNumber: flight.FlightNumber, ReservationCode: flight.ReservationCode, Notes: flight.Notes, OfferURL: flight.OfferURL, CabinClass: flight.CabinClass, Baggage: flight.Baggage, CostCents: flight.CostCents, Currency: flight.Currency, CostDistribution: flight.CostDistribution, ParticipantUserIDs: flight.ParticipantUserIDs, Segments: segments, CreatedAt: flight.CreatedAt, UpdatedAt: flight.UpdatedAt}
+	payments := make([]PaymentResponse, len(flight.Payments))
+	for index, payment := range flight.Payments {
+		payments[index] = PaymentResponse{UserID: payment.UserID, AmountCents: payment.AmountCents, PaidAt: payment.PaidAt}
+	}
+	return FlightResponse{ID: flight.ID, PlanningID: flight.PlanningID, CreatedByUserID: flight.CreatedByUserID, Status: flight.Status, Airline: flight.Airline, FlightNumber: flight.FlightNumber, ReservationCode: flight.ReservationCode, Notes: flight.Notes, OfferURL: flight.OfferURL, CabinClass: flight.CabinClass, Baggage: flight.Baggage, CostCents: flight.CostCents, Currency: flight.Currency, CostDistribution: flight.CostDistribution, ParticipantUserIDs: flight.ParticipantUserIDs, Payments: payments, Segments: segments, CreatedAt: flight.CreatedAt, UpdatedAt: flight.UpdatedAt}
 }

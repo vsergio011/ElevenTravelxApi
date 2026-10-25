@@ -35,6 +35,9 @@ func (s *Service) Create(ctx context.Context, actor, planning uuid.UUID, input C
 	if err := s.validateUsers(ctx, planning, input.ParticipantUserIDs); err != nil {
 		return Flight{}, err
 	}
+	if err := s.validatePaymentUsers(ctx, planning, input.Payments); err != nil {
+		return Flight{}, err
+	}
 	if err := validateInput(input); err != nil {
 		return Flight{}, err
 	}
@@ -74,6 +77,11 @@ func (s *Service) Update(ctx context.Context, actor, planning, id uuid.UUID, inp
 			return Flight{}, err
 		}
 	}
+	if input.Payments != nil {
+		if err = s.validatePaymentUsers(ctx, planning, *input.Payments); err != nil {
+			return Flight{}, err
+		}
+	}
 	if input.Segments != nil {
 		copyFlight := flight
 		copyFlight.Segments = *input.Segments
@@ -100,7 +108,11 @@ func (s *Service) Update(ctx context.Context, actor, planning, id uuid.UUID, inp
 	if input.Segments != nil {
 		merged.Segments = *input.Segments
 	}
-	if err = validateInput(CreateInput{Status: merged.Status, CostCents: merged.CostCents, Currency: merged.Currency, CostDistribution: merged.CostDistribution, ParticipantUserIDs: merged.ParticipantUserIDs, Segments: merged.Segments}); err != nil {
+	var payments []Payment
+	if input.Payments != nil {
+		payments = *input.Payments
+	}
+	if err = validateInput(CreateInput{Status: merged.Status, CostCents: merged.CostCents, Currency: merged.Currency, CostDistribution: merged.CostDistribution, ParticipantUserIDs: merged.ParticipantUserIDs, Payments: payments, Segments: merged.Segments}); err != nil {
 		return Flight{}, err
 	}
 	return s.repository.Update(ctx, planning, id, input)
@@ -196,6 +208,15 @@ func (s *Service) validateUsers(ctx context.Context, planning uuid.UUID, ids []u
 	}
 	return nil
 }
+
+func (s *Service) validatePaymentUsers(ctx context.Context, planning uuid.UUID, payments []Payment) error {
+	userIDs := make([]uuid.UUID, len(payments))
+	for index, payment := range payments {
+		userIDs[index] = payment.UserID
+	}
+	return s.validateUsers(ctx, planning, userIDs)
+}
+
 func (s *Service) requireEdit(ctx context.Context, planning, actor uuid.UUID, flight Flight) error {
 	member, err := s.requireMember(ctx, planning, actor)
 	if err != nil {

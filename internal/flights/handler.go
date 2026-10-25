@@ -52,7 +52,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if body.CostCents != nil {
 		cost = *body.CostCents
 	}
-	input := CreateInput{Status: status, Airline: body.Airline, FlightNumber: body.FlightNumber, ReservationCode: body.ReservationCode, Notes: body.Notes, OfferURL: body.OfferURL, CabinClass: body.CabinClass, Baggage: body.Baggage, CostCents: cost, Currency: currency, CostDistribution: distribution, ParticipantUserIDs: body.ParticipantUserIDs, Segments: toSegments(body.Segments)}
+	input := CreateInput{Status: status, Airline: body.Airline, FlightNumber: body.FlightNumber, ReservationCode: body.ReservationCode, Notes: body.Notes, OfferURL: body.OfferURL, CabinClass: body.CabinClass, Baggage: body.Baggage, CostCents: cost, Currency: currency, CostDistribution: distribution, ParticipantUserIDs: body.ParticipantUserIDs, Payments: toPayments(body.Payments), Segments: toSegments(body.Segments)}
 	flight, err := h.service.Create(r.Context(), actor, planning, input)
 	if err != nil {
 		h.writeError(w, err)
@@ -125,6 +125,10 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := UpdateInput{Status: body.Status, Airline: body.Airline, FlightNumber: body.FlightNumber, ReservationCode: body.ReservationCode, Notes: body.Notes, OfferURL: body.OfferURL, CabinClass: body.CabinClass, Baggage: body.Baggage, CostCents: body.CostCents, Currency: body.Currency, CostDistribution: body.CostDistribution, ParticipantUserIDs: body.ParticipantUserIDs}
+	if body.Payments != nil {
+		payments := toPayments(*body.Payments)
+		input.Payments = &payments
+	}
 	if body.Segments != nil {
 		segments := toSegments(*body.Segments)
 		input.Segments = &segments

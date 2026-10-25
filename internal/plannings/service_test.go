@@ -331,7 +331,7 @@ func (r *fakeRepository) GetPlanningRouteByID(_ context.Context, planningID uuid
 	return PlanningItineraryStop{}, ErrPlanningNotFound
 }
 
-func (r *fakeRepository) CreatePlanningRouteStop(_ context.Context, planningID uuid.UUID, input CreatePlanningRouteStopInput) (PlanningItineraryStop, error) {
+func (r *fakeRepository) CreatePlanningRouteStop(_ context.Context, _ uuid.UUID, planningID uuid.UUID, input CreatePlanningRouteStopInput) (PlanningItineraryStop, error) {
 	if r.planning.ID != planningID {
 		return PlanningItineraryStop{}, ErrPlanningNotFound
 	}

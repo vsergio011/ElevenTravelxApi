@@ -63,7 +63,7 @@ type PlanningActivity struct {
 type PlanningUpcomingActivity struct {
 	ID        uuid.UUID
 	Title     string
-	StartsAt  time.Time
+	StartsAt  string
 	KindLabel *string
 	ImageURL  *string
 }
@@ -108,6 +108,7 @@ type PlanningItineraryCoordinates struct {
 
 type PlanningItineraryStop struct {
 	ID              uuid.UUID
+	CreatedByUserID *uuid.UUID
 	Title           string
 	Description     string
 	Address         string

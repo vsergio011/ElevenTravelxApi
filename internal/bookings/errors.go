@@ -7,9 +7,10 @@ import (
 )
 
 var (
-	ErrBookingNotFound = errors.New("booking not found")
-	ErrForbidden       = errors.New("forbidden")
-	ErrConflict        = errors.New("conflict")
+	ErrBookingNotFound   = errors.New("booking not found")
+	ErrRouteStopNotFound = errors.New("route stop not found")
+	ErrForbidden         = errors.New("forbidden")
+	ErrConflict          = errors.New("conflict")
 )
 
 type ValidationError struct {
