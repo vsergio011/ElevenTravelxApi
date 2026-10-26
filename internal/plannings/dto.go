@@ -129,11 +129,13 @@ type PlanningActivityResponse struct {
 }
 
 type PlanningUpcomingActivityResponse struct {
-	ID        uuid.UUID `json:"id"`
-	Title     string    `json:"title"`
-	StartsAt  string    `json:"starts_at"`
-	KindLabel *string   `json:"kind_label"`
-	ImageURL  *string   `json:"image_url"`
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	StartsAt    string    `json:"starts_at"`
+	KindLabel   *string   `json:"kind_label"`
+	Location    *string   `json:"location,omitempty"`
+	Description *string   `json:"description,omitempty"`
+	ImageURL    *string   `json:"image_url"`
 }
 
 type PlanningNextStopResponse struct {
@@ -270,11 +272,13 @@ func NewPlanningDashboardActivityResponse(activity PlanningDashboardActivity) Pl
 
 	for _, upcomingActivity := range activity.UpcomingActivities {
 		response.UpcomingActivities = append(response.UpcomingActivities, PlanningUpcomingActivityResponse{
-			ID:        upcomingActivity.ID,
-			Title:     upcomingActivity.Title,
-			StartsAt:  upcomingActivity.StartsAt,
-			KindLabel: upcomingActivity.KindLabel,
-			ImageURL:  upcomingActivity.ImageURL,
+			ID:          upcomingActivity.ID,
+			Title:       upcomingActivity.Title,
+			StartsAt:    upcomingActivity.StartsAt,
+			KindLabel:   upcomingActivity.KindLabel,
+			Location:    upcomingActivity.Location,
+			Description: upcomingActivity.Description,
+			ImageURL:    upcomingActivity.ImageURL,
 		})
 	}
 

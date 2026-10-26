@@ -61,11 +61,13 @@ type PlanningActivity struct {
 }
 
 type PlanningUpcomingActivity struct {
-	ID        uuid.UUID
-	Title     string
-	StartsAt  string
-	KindLabel *string
-	ImageURL  *string
+	ID          uuid.UUID
+	Title       string
+	StartsAt    string
+	KindLabel   *string
+	Location    *string
+	Description *string
+	ImageURL    *string
 }
 
 type PlanningNextStop struct {

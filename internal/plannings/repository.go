@@ -221,11 +221,13 @@ func (r *PostgresRepository) GetDashboardActivity(ctx context.Context, planningI
 		startsAt := routeStopStartsAt(dateLabel, planningStartsAt, daySortOrder, timeLabel, createdAt)
 
 		activity.UpcomingActivities = append(activity.UpcomingActivities, PlanningUpcomingActivity{
-			ID:        id,
-			Title:     title,
-			StartsAt:  startsAt,
-			KindLabel: planningStringPointer(category),
-			ImageURL:  imageURL,
+			ID:          id,
+			Title:       title,
+			StartsAt:    startsAt,
+			KindLabel:   planningStringPointer(category),
+			Location:    planningStringPointer(address),
+			Description: planningStringPointer(description),
+			ImageURL:    imageURL,
 		})
 
 		if activity.NextStop == nil {
