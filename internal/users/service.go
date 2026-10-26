@@ -2,6 +2,7 @@ package users
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
@@ -13,6 +14,26 @@ type Service struct {
 
 func NewService(repository Repository) *Service {
 	return &Service{repository: repository}
+}
+
+// IsUsernameAvailable reports whether no profile currently uses the username (case-insensitive).
+func (s *Service) IsUsernameAvailable(ctx context.Context, username string) (bool, error) {
+	_, err := s.repository.GetProfileByUsername(ctx, username)
+	if errors.Is(err, ErrProfileNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+// CreateRegisteredProfile creates the profile for a newly registered account. It returns ErrConflict if the username is taken.
+func (s *Service) CreateRegisteredProfile(ctx context.Context, userID uuid.UUID, username string) error {
+	fullName := "Traveler " + strings.ToUpper(userID.String()[:6])
+	_, err := s.repository.CreateProfile(ctx, userID, username, fullName)
+	return err
 }
 
 func (s *Service) GetMyProfile(ctx context.Context, actorUserID uuid.UUID) (UserProfileView, error) {

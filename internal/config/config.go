@@ -17,10 +17,16 @@ type Config struct {
 	SupabaseJWTSecret   string
 	SupabaseJWTIssuer   string
 	SupabaseJWTAudience string
+	SupabaseURL         string
+	SupabaseServiceRole string
 	CORSAllowedOrigins  []string
 	MapboxAccessToken   string
 	AeroDataBoxAPIKey   string
 	AeroDataBoxHost     string
+
+	RegistrationEnabled            bool
+	RegistrationAccessCodeRequired bool
+	RegistrationAccessCode         string
 }
 
 func Load() (Config, error) {
@@ -28,17 +34,31 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	registrationEnabled, err := getBoolEnv("REGISTRATION_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
+	registrationAccessCodeRequired, err := getBoolEnv("REGISTRATION_ACCESS_CODE_REQUIRED", false)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		Port:                getEnv("PORT", "8080"),
-		DatabaseURL:         os.Getenv("DATABASE_URL"),
-		DatabaseMaxConns:    getEnvInt32("DATABASE_MAX_CONNS", 3),
-		SupabaseJWTSecret:   os.Getenv("SUPABASE_JWT_SECRET"),
-		SupabaseJWTIssuer:   os.Getenv("SUPABASE_JWT_ISSUER"),
-		SupabaseJWTAudience: os.Getenv("SUPABASE_JWT_AUDIENCE"),
-		CORSAllowedOrigins:  getCSVEnv("CORS_ALLOWED_ORIGINS", []string{"http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19006", "http://127.0.0.1:19006", "https://app.eleventravel.com"}),
-		MapboxAccessToken:   os.Getenv("MAPBOX_ACCESS_TOKEN"),
-		AeroDataBoxAPIKey:   os.Getenv("AERODATABOX_RAPIDAPI_KEY"),
-		AeroDataBoxHost:     getEnv("AERODATABOX_RAPIDAPI_HOST", "aerodatabox.p.rapidapi.com"),
+		Port:                           getEnv("PORT", "8080"),
+		DatabaseURL:                    os.Getenv("DATABASE_URL"),
+		DatabaseMaxConns:               getEnvInt32("DATABASE_MAX_CONNS", 3),
+		SupabaseJWTSecret:              os.Getenv("SUPABASE_JWT_SECRET"),
+		SupabaseJWTIssuer:              os.Getenv("SUPABASE_JWT_ISSUER"),
+		SupabaseJWTAudience:            os.Getenv("SUPABASE_JWT_AUDIENCE"),
+		SupabaseURL:                    strings.TrimSpace(os.Getenv("SUPABASE_URL")),
+		SupabaseServiceRole:            strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
+		CORSAllowedOrigins:             getCSVEnv("CORS_ALLOWED_ORIGINS", []string{"http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19006", "http://127.0.0.1:19006", "https://app.eleventravel.com"}),
+		MapboxAccessToken:              os.Getenv("MAPBOX_ACCESS_TOKEN"),
+		AeroDataBoxAPIKey:              os.Getenv("AERODATABOX_RAPIDAPI_KEY"),
+		AeroDataBoxHost:                getEnv("AERODATABOX_RAPIDAPI_HOST", "aerodatabox.p.rapidapi.com"),
+		RegistrationEnabled:            registrationEnabled,
+		RegistrationAccessCodeRequired: registrationAccessCodeRequired,
+		RegistrationAccessCode:         strings.TrimSpace(os.Getenv("REGISTRATION_ACCESS_CODE")),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -50,6 +70,15 @@ func Load() (Config, error) {
 
 	if cfg.SupabaseJWTSecret == "" && cfg.SupabaseJWTIssuer == "" {
 		return Config{}, errors.New("SUPABASE_JWT_SECRET or SUPABASE_JWT_ISSUER is required")
+	}
+
+	if cfg.RegistrationEnabled {
+		if cfg.SupabaseURL == "" || cfg.SupabaseServiceRole == "" {
+			return Config{}, errors.New("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required when REGISTRATION_ENABLED=true")
+		}
+		if cfg.RegistrationAccessCodeRequired && cfg.RegistrationAccessCode == "" {
+			return Config{}, errors.New("REGISTRATION_ACCESS_CODE is required when REGISTRATION_ACCESS_CODE_REQUIRED=true")
+		}
 	}
 
 	return cfg, nil
@@ -79,6 +108,20 @@ func getEnvInt32(key string, fallback int32) int32 {
 	}
 
 	return int32(parsed)
+}
+
+func getBoolEnv(key string, fallback bool) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", key)
+	}
+
+	return parsed, nil
 }
 
 func getCSVEnv(key string, fallback []string) []string {

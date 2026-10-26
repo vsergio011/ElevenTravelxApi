@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/eleventravel/eleventravel-api/internal/auth"
 	"github.com/eleventravel/eleventravel-api/internal/bookings"
 	"github.com/eleventravel/eleventravel-api/internal/checklists"
 	"github.com/eleventravel/eleventravel-api/internal/expenses"
@@ -16,7 +17,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/users"
 )
 
-func NewRouter(tokenValidator supabasejwt.TokenValidator, planningHandler *plannings.Handler, userHandler *users.Handler, bookingHandler *bookings.Handler, flightHandler *flights.Handler, checklistHandler *checklists.Handler, expenseHandler *expenses.Handler, allowedOrigins []string) stdhttp.Handler {
+func NewRouter(tokenValidator supabasejwt.TokenValidator, authHandler *auth.Handler, planningHandler *plannings.Handler, userHandler *users.Handler, bookingHandler *bookings.Handler, flightHandler *flights.Handler, checklistHandler *checklists.Handler, expenseHandler *expenses.Handler, allowedOrigins []string) stdhttp.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(middleware.Logging)
@@ -27,13 +28,17 @@ func NewRouter(tokenValidator supabasejwt.TokenValidator, planningHandler *plann
 	})
 
 	router.Route("/v1", func(api chi.Router) {
-		api.Use(middleware.Authenticate(tokenValidator))
-		planningHandler.RegisterRoutes(api)
-		userHandler.RegisterRoutes(api)
-		bookingHandler.RegisterRoutes(api)
-		flightHandler.RegisterRoutes(api)
-		checklistHandler.RegisterRoutes(api)
-		expenseHandler.RegisterRoutes(api)
+		authHandler.RegisterRoutes(api)
+
+		api.Group(func(protected chi.Router) {
+			protected.Use(middleware.Authenticate(tokenValidator))
+			planningHandler.RegisterRoutes(protected)
+			userHandler.RegisterRoutes(protected)
+			bookingHandler.RegisterRoutes(protected)
+			flightHandler.RegisterRoutes(protected)
+			checklistHandler.RegisterRoutes(protected)
+			expenseHandler.RegisterRoutes(protected)
+		})
 	})
 
 	return router

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/eleventravel/eleventravel-api/internal/auth"
 	"github.com/eleventravel/eleventravel-api/internal/bookings"
 	"github.com/eleventravel/eleventravel-api/internal/checklists"
 	"github.com/eleventravel/eleventravel-api/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/flights"
 	apihttp "github.com/eleventravel/eleventravel-api/internal/http"
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
+	"github.com/eleventravel/eleventravel-api/internal/platform/auth/supabaseadmin"
 	"github.com/eleventravel/eleventravel-api/internal/platform/auth/supabasejwt"
 	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 	"github.com/eleventravel/eleventravel-api/internal/users"
@@ -39,6 +41,13 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	userRepository := users.NewPostgresRepository(pool)
 	userService := users.NewService(userRepository)
 	userHandler := users.NewHandler(userService)
+	authService := auth.NewService(
+		auth.Settings{Enabled: cfg.RegistrationEnabled, AccessCodeRequired: cfg.RegistrationAccessCodeRequired},
+		cfg.RegistrationAccessCode,
+		userService,
+		supabaseadmin.NewClient(cfg.SupabaseURL, cfg.SupabaseServiceRole),
+	)
+	authHandler := auth.NewHandler(authService)
 	bookingRepository := bookings.NewPostgresRepository(pool)
 	flightRepository := flights.NewPostgresRepository(pool)
 	flightLookup := flights.NewAeroDataBoxClient(cfg.AeroDataBoxAPIKey, cfg.AeroDataBoxHost)
@@ -54,7 +63,7 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	expenseHandler := expenses.NewHandler(expenseService)
 
 	return &Application{
-		Handler: apihttp.NewRouter(tokenValidator, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, cfg.CORSAllowedOrigins),
+		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, cfg.CORSAllowedOrigins),
 		Close:   pool.Close,
 	}, nil
 }

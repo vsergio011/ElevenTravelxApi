@@ -94,7 +94,7 @@ func (h *Handler) getProfileByUsername(writer http.ResponseWriter, request *http
 	}
 
 	username := strings.TrimSpace(chi.URLParam(request, "username"))
-	if !isValidUsername(username) {
+	if !IsValidUsername(username) {
 		response.WriteError(writer, http.StatusBadRequest, "invalid_path_param", "username must be 3-30 chars using letters, numbers, _, -, .", nil)
 		return
 	}

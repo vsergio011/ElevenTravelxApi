@@ -14,6 +14,7 @@ import (
 
 type Repository interface {
 	EnsureProfile(ctx context.Context, userID uuid.UUID, usernameHint string) (UserProfile, error)
+	CreateProfile(ctx context.Context, userID uuid.UUID, username string, fullName string) (UserProfile, error)
 	GetProfileByUserID(ctx context.Context, userID uuid.UUID) (UserProfile, error)
 	GetProfileByUsername(ctx context.Context, username string) (UserProfile, error)
 	UpdateProfile(ctx context.Context, userID uuid.UUID, input UpdateUserProfileInput) (UserProfile, error)
@@ -68,6 +69,34 @@ func (r *PostgresRepository) EnsureProfile(ctx context.Context, userID uuid.UUID
 	}
 
 	return r.GetProfileByUserID(ctx, userID)
+}
+
+// CreateProfile inserts a new profile and returns ErrConflict when the username or user is already taken.
+func (r *PostgresRepository) CreateProfile(ctx context.Context, userID uuid.UUID, username string, fullName string) (UserProfile, error) {
+	profile := UserProfile{}
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO public.user_profiles (user_id, username, full_name)
+		VALUES ($1, $2, $3)
+		RETURNING user_id, username, full_name, bio, avatar_url, multimedia_visibility, badges_visibility, created_at, updated_at
+	`, userID, username, fullName).Scan(
+		&profile.UserID,
+		&profile.Username,
+		&profile.FullName,
+		&profile.Bio,
+		&profile.AvatarURL,
+		&profile.MultimediaVisibility,
+		&profile.BadgesVisibility,
+		&profile.CreatedAt,
+		&profile.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return UserProfile{}, ErrConflict
+		}
+		return UserProfile{}, err
+	}
+
+	return profile, nil
 }
 
 func (r *PostgresRepository) GetProfileByUserID(ctx context.Context, userID uuid.UUID) (UserProfile, error) {

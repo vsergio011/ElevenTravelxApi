@@ -148,6 +148,7 @@ func validateVerifyAchievementInput(input VerifyAchievementInput) error {
 	return nil
 }
 
-func isValidUsername(username string) bool {
+// IsValidUsername reports whether the username matches the allowed format (3-30 chars: letters, numbers, _, -, .).
+func IsValidUsername(username string) bool {
 	return usernamePattern.MatchString(strings.ToLower(strings.TrimSpace(username)))
 }
