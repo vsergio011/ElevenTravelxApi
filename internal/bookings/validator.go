@@ -52,7 +52,7 @@ func validateCreateBookingRequest(request CreateBookingRequest) (CreateBookingIn
 		return CreateBookingInput{}, ValidationError{Details: details}
 	}
 	payments, paymentErr := validatePayments(request.Payments)
-	if paymentErr != nil {
+	if len(paymentErr) > 0 {
 		details = append(details, paymentErr...)
 	}
 	if len(details) > 0 {
@@ -140,7 +140,7 @@ func validateUpdateBookingRequest(request UpdateBookingRequest) (UpdateBookingIn
 	var payments *[]Payment
 	if request.Payments != nil {
 		parsed, paymentErr := validatePayments(*request.Payments)
-		if paymentErr != nil {
+		if len(paymentErr) > 0 {
 			details = append(details, paymentErr...)
 		} else {
 			payments = &parsed

@@ -107,6 +107,16 @@ func TestValidateUpdateBookingRequestTracksRouteStopFieldPresence(t *testing.T) 
 	if !associated.RouteStopIDSet || associated.RouteStopID == nil || *associated.RouteStopID != routeStopID {
 		t.Fatal("route_stop_id must be parsed as a requested association")
 	}
+
+	withPayments, err := validateUpdateBookingRequest(UpdateBookingRequest{
+		Payments: &[]PaymentRequest{{UserID: routeStopID, AmountCents: 24000}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for valid payments: %v", err)
+	}
+	if withPayments.Payments == nil || len(*withPayments.Payments) != 1 || (*withPayments.Payments)[0].AmountCents != 24000 {
+		t.Fatal("payments must be carried into the update input")
+	}
 }
 
 func asValidationError(err error, target *ValidationError) bool {
