@@ -736,6 +736,9 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 		return PlanningItinerary{}, err
 	}
 
+	// Each result set is read and closed before the next query runs. Nested
+	// queries would hold several pool connections at once and can block
+	// indefinitely when the pool is small.
 	dayRows, err := r.pool.Query(ctx, `
 		SELECT id, label, date_label, sort_order
 		FROM public.planning_route_days
@@ -745,18 +748,32 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 	if err != nil {
 		return PlanningItinerary{}, err
 	}
-	defer dayRows.Close()
 
+	type dayRecord struct {
+		day       PlanningItineraryDay
+		sortOrder int
+	}
+	dayRecords := make([]dayRecord, 0)
 	for dayRows.Next() {
-		day := PlanningItineraryDay{}
-		var daySortOrder int
-		if err := dayRows.Scan(&day.ID, &day.Label, &day.DateLabel, &daySortOrder); err != nil {
+		record := dayRecord{}
+		if err := dayRows.Scan(&record.day.ID, &record.day.Label, &record.day.DateLabel, &record.sortOrder); err != nil {
+			dayRows.Close()
 			return PlanningItinerary{}, err
 		}
+		dayRecords = append(dayRecords, record)
+	}
+	if err := dayRows.Err(); err != nil {
+		dayRows.Close()
+		return PlanningItinerary{}, err
+	}
+	dayRows.Close()
+
+	for _, record := range dayRecords {
+		day := record.day
 		if resolvedDate, isCalendarDate := resolveRouteDayDate(day.DateLabel, planningStartsAt); isCalendarDate {
 			day.DateLabel = resolvedDate.Format("2006-01-02")
 		} else if planningStartsAt != nil {
-			day.DateLabel = planningStartsAt.AddDate(0, 0, daySortOrder).Format("2006-01-02")
+			day.DateLabel = planningStartsAt.AddDate(0, 0, record.sortOrder).Format("2006-01-02")
 		}
 
 		stopRows, err := r.pool.Query(ctx, `
@@ -769,6 +786,7 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 			return PlanningItinerary{}, err
 		}
 
+		var stops []PlanningItineraryStop
 		for stopRows.Next() {
 			stop := PlanningItineraryStop{}
 			var imageURL *string
@@ -797,12 +815,7 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 			}
 			stop.ImageURL = imageURL
 			stop.CreatedByUserID = uuidPointer(createdByUserID)
-			stop.Bookings, err = r.listRouteStopBookings(ctx, stop.ID)
-			if err != nil {
-				stopRows.Close()
-				return PlanningItinerary{}, err
-			}
-			day.Stops = append(day.Stops, stop)
+			stops = append(stops, stop)
 		}
 		if err := stopRows.Err(); err != nil {
 			stopRows.Close()
@@ -810,10 +823,15 @@ func (r *PostgresRepository) GetPlanningItinerary(ctx context.Context, planningI
 		}
 		stopRows.Close()
 
+		for i := range stops {
+			stops[i].Bookings, err = r.listRouteStopBookings(ctx, stops[i].ID)
+			if err != nil {
+				return PlanningItinerary{}, err
+			}
+		}
+		day.Stops = stops
+
 		itinerary.Days = append(itinerary.Days, day)
-	}
-	if err := dayRows.Err(); err != nil {
-		return PlanningItinerary{}, err
 	}
 
 	return itinerary, nil
