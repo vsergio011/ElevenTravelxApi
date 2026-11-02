@@ -59,7 +59,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Port:                           getEnv("PORT", "8080"),
 		DatabaseURL:                    os.Getenv("DATABASE_URL"),
-		DatabaseMaxConns:               getEnvInt32("DATABASE_MAX_CONNS", 3),
+		DatabaseMaxConns:               getEnvInt32("DATABASE_MAX_CONNS", 2),
 		SupabaseJWTSecret:              os.Getenv("SUPABASE_JWT_SECRET"),
 		SupabaseJWTIssuer:              os.Getenv("SUPABASE_JWT_ISSUER"),
 		SupabaseJWTAudience:            os.Getenv("SUPABASE_JWT_AUDIENCE"),

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
+	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 )
 
 type Repository interface {
@@ -341,7 +342,7 @@ func (r *PostgresRepository) listParticipantsForBookings(ctx context.Context, bo
 	if len(bookingIDs) == 0 {
 		return result, nil
 	}
-	rows, err := r.pool.Query(ctx, `SELECT booking_id, user_id FROM public.booking_participants WHERE booking_id = ANY($1) ORDER BY booking_id, user_id`, bookingIDs)
+	rows, err := r.pool.Query(ctx, `SELECT booking_id, user_id FROM public.booking_participants WHERE booking_id = ANY($1::uuid[]) ORDER BY booking_id, user_id`, db.UUIDArray(bookingIDs))
 	if err != nil {
 		return nil, err
 	}

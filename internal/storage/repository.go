@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -137,8 +138,8 @@ func (r *PostgresRepository) ListPublicProfileMedia(ctx context.Context) ([]Imag
 
 func (r *PostgresRepository) ListByIDs(ctx context.Context, ids []uuid.UUID) ([]Image, error) {
 	return r.queryImages(ctx, `
-		SELECT `+imageColumns+` FROM public.images WHERE id = ANY($1) AND status = 'completed'
-	`, ids)
+		SELECT `+imageColumns+` FROM public.images WHERE id = ANY($1::uuid[]) AND status = 'completed'
+	`, db.UUIDArray(ids))
 }
 
 func (r *PostgresRepository) UpdateBucket(ctx context.Context, id uuid.UUID, bucket string, visibility string) error {

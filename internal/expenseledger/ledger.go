@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 )
 
 const (
@@ -247,8 +248,8 @@ func LoadItemCosts(ctx context.Context, q Querier, itemIDs []uuid.UUID) (map[uui
 	}
 	rows, err := q.Query(ctx, `
 		SELECT DISTINCT ON (planning_item_id) planning_item_id, id, amount_cents, currency, distribution
-		FROM public.expenses WHERE planning_item_id = ANY($1)
-		ORDER BY planning_item_id, created_at, id`, itemIDs)
+		FROM public.expenses WHERE planning_item_id = ANY($1::uuid[])
+		ORDER BY planning_item_id, created_at, id`, db.UUIDArray(itemIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +289,7 @@ func LoadPayments(ctx context.Context, q Querier, expenseIDs []uuid.UUID) (map[u
 	if len(expenseIDs) == 0 {
 		return result, nil
 	}
-	rows, err := q.Query(ctx, `SELECT id, expense_id, user_id, amount_cents, paid_at FROM public.expense_payments WHERE expense_id = ANY($1) ORDER BY expense_id, paid_at, id`, expenseIDs)
+	rows, err := q.Query(ctx, `SELECT id, expense_id, user_id, amount_cents, paid_at FROM public.expense_payments WHERE expense_id = ANY($1::uuid[]) ORDER BY expense_id, paid_at, id`, db.UUIDArray(expenseIDs))
 	if err != nil {
 		return nil, err
 	}

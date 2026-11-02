@@ -11,6 +11,7 @@ import (
 
 	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
+	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 )
 
 type Repository interface {
@@ -126,7 +127,7 @@ func (r *PostgresRepository) attachDetails(ctx context.Context, q expenseledger.
 		ids = append(ids, expense.ID)
 		index[expense.ID] = i
 	}
-	rows, err := q.Query(ctx, `SELECT expense_id, user_id, share_cents FROM public.expense_participants WHERE expense_id = ANY($1) ORDER BY expense_id, user_id`, ids)
+	rows, err := q.Query(ctx, `SELECT expense_id, user_id, share_cents FROM public.expense_participants WHERE expense_id = ANY($1::uuid[]) ORDER BY expense_id, user_id`, db.UUIDArray(ids))
 	if err != nil {
 		return err
 	}

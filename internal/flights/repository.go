@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
+	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -297,7 +298,7 @@ func listParticipantsForFlights(ctx context.Context, q queryer, ids []uuid.UUID)
 	if len(ids) == 0 {
 		return result, nil
 	}
-	rows, err := q.Query(ctx, `SELECT flight_id, user_id FROM public.flight_participants WHERE flight_id = ANY($1) ORDER BY flight_id, user_id`, ids)
+	rows, err := q.Query(ctx, `SELECT flight_id, user_id FROM public.flight_participants WHERE flight_id = ANY($1::uuid[]) ORDER BY flight_id, user_id`, db.UUIDArray(ids))
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +345,7 @@ func listSegmentsForFlights(ctx context.Context, q queryer, ids []uuid.UUID) (ma
 	if len(ids) == 0 {
 		return result, nil
 	}
-	rows, err := q.Query(ctx, `SELECT flight_id,id,direction,position,origin_label,origin_city,origin_airport_name,origin_airport_code,origin_mapbox_id,destination_label,destination_city,destination_airport_name,destination_airport_code,destination_mapbox_id,departure_at,arrival_at,departure_terminal,arrival_terminal,airline,flight_number,origin_timezone,destination_timezone FROM public.flight_segments WHERE flight_id = ANY($1) ORDER BY flight_id, direction, position`, ids)
+	rows, err := q.Query(ctx, `SELECT flight_id,id,direction,position,origin_label,origin_city,origin_airport_name,origin_airport_code,origin_mapbox_id,destination_label,destination_city,destination_airport_name,destination_airport_code,destination_mapbox_id,departure_at,arrival_at,departure_terminal,arrival_terminal,airline,flight_number,origin_timezone,destination_timezone FROM public.flight_segments WHERE flight_id = ANY($1::uuid[]) ORDER BY flight_id, direction, position`, db.UUIDArray(ids))
 	if err != nil {
 		return nil, err
 	}
