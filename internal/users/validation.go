@@ -98,6 +98,10 @@ func validateCreateLocationInput(input CreateUserLocationInput) error {
 		}
 	}
 
+	if input.VisitedAt != nil && input.VisitedUntil != nil && input.VisitedUntil.Before(*input.VisitedAt) {
+		details = append(details, response.ErrorDetail{Field: "visited_until", Message: "must be on or after visited_at"})
+	}
+
 	if len(details) > 0 {
 		return ValidationError{Details: details}
 	}

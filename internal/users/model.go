@@ -59,6 +59,9 @@ type UserLocationPin struct {
 	Latitude                 float64
 	Longitude                float64
 	CountryCode              *string
+	VisitedAt                *time.Time
+	VisitedUntil             *time.Time
+	IsAlbum                  bool
 	ThumbnailURL             *string
 	MediaCount               int
 	HasVerifiedAchievement   bool
@@ -66,15 +69,20 @@ type UserLocationPin struct {
 }
 
 type UserMediaAsset struct {
-	ID           uuid.UUID
-	UserID       uuid.UUID
-	LocationID   uuid.UUID
-	MediaType    string
-	URL          string
-	ThumbnailURL *string
-	Caption      *string
-	ImageID      *uuid.UUID
-	CreatedAt    time.Time
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	LocationID       uuid.UUID
+	MediaType        string
+	URL              string
+	ThumbnailURL     *string
+	Caption          *string
+	ImageID          *uuid.UUID
+	TakenAt          *time.Time
+	PlaceName        *string
+	PlaceCountryCode *string
+	PlaceLatitude    *float64
+	PlaceLongitude   *float64
+	CreatedAt        time.Time
 }
 
 type UserBadge struct {
@@ -120,27 +128,41 @@ type UpdateUserProfileInput struct {
 }
 
 type CreateUserLocationInput struct {
-	Name        string
-	Latitude    float64
-	Longitude   float64
-	CountryCode *string
-	VisitedAt   *time.Time
+	Name         string
+	Latitude     float64
+	Longitude    float64
+	CountryCode  *string
+	VisitedAt    *time.Time
+	VisitedUntil *time.Time
+	IsAlbum      bool
 }
 
 type UpdateUserLocationInput struct {
-	Name        string
-	Latitude    float64
-	Longitude   float64
-	CountryCode *string
+	Name         string
+	Latitude     float64
+	Longitude    float64
+	CountryCode  *string
+	VisitedAt    *time.Time
+	VisitedUntil *time.Time
 }
 
 type CreateUserMediaInput struct {
-	LocationID   uuid.UUID
-	MediaType    string
-	URL          string
-	ThumbnailURL *string
-	Caption      *string
-	ImageID      *uuid.UUID
+	LocationID       uuid.UUID
+	MediaType        string
+	URL              string
+	ThumbnailURL     *string
+	Caption          *string
+	ImageID          *uuid.UUID
+	TakenAt          *time.Time
+	PlaceName        *string
+	PlaceCountryCode *string
+	PlaceLatitude    *float64
+	PlaceLongitude   *float64
+}
+
+type UpdateUserMediaInput struct {
+	Caption *string
+	TakenAt *time.Time
 }
 
 type VerifyAchievementInput struct {

@@ -21,6 +21,7 @@ type Service struct {
 type ImageStore interface {
 	AttachMediaImage(ctx context.Context, userID uuid.UUID, imageID uuid.UUID) (string, error)
 	ResolveURLs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
+	Delete(ctx context.Context, actorID uuid.UUID, imageID uuid.UUID) error
 }
 
 func NewService(repository Repository) *Service {
@@ -164,7 +165,7 @@ func (s *Service) UpdateLocation(ctx context.Context, actorUserID uuid.UUID, tar
 		return UserLocationPin{}, ErrForbidden
 	}
 
-	if err := validateCreateLocationInput(CreateUserLocationInput{Name: input.Name, Latitude: input.Latitude, Longitude: input.Longitude, CountryCode: input.CountryCode}); err != nil {
+	if err := validateCreateLocationInput(CreateUserLocationInput{Name: input.Name, Latitude: input.Latitude, Longitude: input.Longitude, CountryCode: input.CountryCode, VisitedAt: input.VisitedAt, VisitedUntil: input.VisitedUntil}); err != nil {
 		return UserLocationPin{}, err
 	}
 
@@ -219,6 +220,42 @@ func (s *Service) AddMedia(ctx context.Context, actorUserID uuid.UUID, targetUse
 	}
 
 	return s.resolveMediaURLs(ctx, []UserMediaAsset{item})[0], nil
+}
+
+func (s *Service) UpdateMedia(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, mediaID uuid.UUID, input UpdateUserMediaInput) (UserMediaAsset, error) {
+	if actorUserID != targetUserID {
+		return UserMediaAsset{}, ErrForbidden
+	}
+
+	if input.Caption != nil && len(strings.TrimSpace(*input.Caption)) > 180 {
+		return UserMediaAsset{}, ValidationError{Details: []response.ErrorDetail{{Field: "caption", Message: "must be up to 180 characters"}}}
+	}
+
+	item, err := s.repository.UpdateMedia(ctx, actorUserID, mediaID, input)
+	if err != nil {
+		return UserMediaAsset{}, err
+	}
+
+	return s.resolveMediaURLs(ctx, []UserMediaAsset{item})[0], nil
+}
+
+func (s *Service) DeleteMedia(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, mediaID uuid.UUID) error {
+	if actorUserID != targetUserID {
+		return ErrForbidden
+	}
+
+	imageID, err := s.repository.DeleteMedia(ctx, actorUserID, mediaID)
+	if err != nil {
+		return err
+	}
+
+	if imageID != nil && s.images != nil {
+		if err := s.images.Delete(ctx, actorUserID, *imageID); err != nil && !errors.Is(err, storage.ErrNotFound) {
+			log.Printf("users: delete media image failed: %v", err)
+		}
+	}
+
+	return nil
 }
 
 // resolveMediaURLs replaces stored URLs with public or short-lived signed URLs for storage-backed media.

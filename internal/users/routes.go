@@ -18,6 +18,8 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 		usersRouter.Patch("/{userId}/locations/{locationId}", h.updateLocation)
 		usersRouter.Delete("/{userId}/locations/{locationId}", h.deleteLocation)
 		usersRouter.Post("/{userId}/media", h.createMedia)
+		usersRouter.Patch("/{userId}/media/{mediaId}", h.updateMedia)
+		usersRouter.Delete("/{userId}/media/{mediaId}", h.deleteMedia)
 		usersRouter.Post("/{userId}/achievements/verify", h.verifyAchievement)
 	})
 }

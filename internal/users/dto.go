@@ -15,27 +15,41 @@ type UpdateUserProfileRequest struct {
 }
 
 type CreateUserLocationRequest struct {
-	Name        string  `json:"name"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
-	CountryCode *string `json:"country_code"`
-	VisitedAt   *string `json:"visited_at"`
+	Name         string  `json:"name"`
+	Latitude     float64 `json:"latitude"`
+	Longitude    float64 `json:"longitude"`
+	CountryCode  *string `json:"country_code"`
+	VisitedAt    *string `json:"visited_at"`
+	VisitedUntil *string `json:"visited_until"`
+	IsAlbum      bool    `json:"is_album"`
 }
 
 type UpdateUserLocationRequest struct {
-	Name        string  `json:"name"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
-	CountryCode *string `json:"country_code"`
+	Name         string  `json:"name"`
+	Latitude     float64 `json:"latitude"`
+	Longitude    float64 `json:"longitude"`
+	CountryCode  *string `json:"country_code"`
+	VisitedAt    *string `json:"visited_at"`
+	VisitedUntil *string `json:"visited_until"`
 }
 
 type CreateUserMediaRequest struct {
-	LocationID   string  `json:"location_id"`
-	MediaType    string  `json:"media_type"`
-	URL          string  `json:"url"`
-	ThumbnailURL *string `json:"thumbnail_url"`
-	Caption      *string `json:"caption"`
-	ImageID      *string `json:"image_id"`
+	LocationID       string   `json:"location_id"`
+	MediaType        string   `json:"media_type"`
+	URL              string   `json:"url"`
+	ThumbnailURL     *string  `json:"thumbnail_url"`
+	Caption          *string  `json:"caption"`
+	ImageID          *string  `json:"image_id"`
+	TakenAt          *string  `json:"taken_at"`
+	PlaceName        *string  `json:"place_name"`
+	PlaceCountryCode *string  `json:"place_country_code"`
+	PlaceLatitude    *float64 `json:"place_latitude"`
+	PlaceLongitude   *float64 `json:"place_longitude"`
+}
+
+type UpdateUserMediaRequest struct {
+	Caption *string `json:"caption"`
+	TakenAt *string `json:"taken_at"`
 }
 
 type VerifyAchievementRequest struct {
@@ -65,26 +79,34 @@ type UserSectionResponse[T any] struct {
 }
 
 type UserLocationPinResponse struct {
-	LocationID               uuid.UUID `json:"location_id"`
-	Name                     string    `json:"name"`
-	Latitude                 float64   `json:"latitude"`
-	Longitude                float64   `json:"longitude"`
-	CountryCode              *string   `json:"country_code"`
-	ThumbnailURL             *string   `json:"thumbnail_url"`
-	MediaCount               int       `json:"media_count"`
-	HasVerifiedAchievement   bool      `json:"has_verified_achievement"`
-	VerifiedAchievementCount int       `json:"verified_achievement_count"`
+	LocationID               uuid.UUID  `json:"location_id"`
+	Name                     string     `json:"name"`
+	Latitude                 float64    `json:"latitude"`
+	Longitude                float64    `json:"longitude"`
+	CountryCode              *string    `json:"country_code"`
+	VisitedAt                *time.Time `json:"visited_at"`
+	VisitedUntil             *time.Time `json:"visited_until"`
+	IsAlbum                  bool       `json:"is_album"`
+	ThumbnailURL             *string    `json:"thumbnail_url"`
+	MediaCount               int        `json:"media_count"`
+	HasVerifiedAchievement   bool       `json:"has_verified_achievement"`
+	VerifiedAchievementCount int        `json:"verified_achievement_count"`
 }
 
 type UserMediaAssetResponse struct {
-	ID           uuid.UUID  `json:"id"`
-	LocationID   uuid.UUID  `json:"location_id"`
-	MediaType    string     `json:"media_type"`
-	URL          string     `json:"url"`
-	ThumbnailURL *string    `json:"thumbnail_url"`
-	Caption      *string    `json:"caption"`
-	ImageID      *uuid.UUID `json:"image_id"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID               uuid.UUID  `json:"id"`
+	LocationID       uuid.UUID  `json:"location_id"`
+	MediaType        string     `json:"media_type"`
+	URL              string     `json:"url"`
+	ThumbnailURL     *string    `json:"thumbnail_url"`
+	Caption          *string    `json:"caption"`
+	ImageID          *uuid.UUID `json:"image_id"`
+	TakenAt          *time.Time `json:"taken_at"`
+	PlaceName        *string    `json:"place_name"`
+	PlaceCountryCode *string    `json:"place_country_code"`
+	PlaceLatitude    *float64   `json:"place_latitude"`
+	PlaceLongitude   *float64   `json:"place_longitude"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 type UserBadgeResponse struct {
@@ -124,6 +146,9 @@ func toProfileResponse(view UserProfileView) UserProfileResponse {
 			Latitude:                 pin.Latitude,
 			Longitude:                pin.Longitude,
 			CountryCode:              pin.CountryCode,
+			VisitedAt:                pin.VisitedAt,
+			VisitedUntil:             pin.VisitedUntil,
+			IsAlbum:                  pin.IsAlbum,
 			ThumbnailURL:             pin.ThumbnailURL,
 			MediaCount:               pin.MediaCount,
 			HasVerifiedAchievement:   pin.HasVerifiedAchievement,
@@ -134,14 +159,19 @@ func toProfileResponse(view UserProfileView) UserProfileResponse {
 	mediaItems := make([]UserMediaAssetResponse, 0, len(view.Media.Items))
 	for _, item := range view.Media.Items {
 		mediaItems = append(mediaItems, UserMediaAssetResponse{
-			ID:           item.ID,
-			LocationID:   item.LocationID,
-			MediaType:    item.MediaType,
-			URL:          item.URL,
-			ThumbnailURL: item.ThumbnailURL,
-			Caption:      item.Caption,
-			ImageID:      item.ImageID,
-			CreatedAt:    item.CreatedAt,
+			ID:               item.ID,
+			LocationID:       item.LocationID,
+			MediaType:        item.MediaType,
+			URL:              item.URL,
+			ThumbnailURL:     item.ThumbnailURL,
+			Caption:          item.Caption,
+			ImageID:          item.ImageID,
+			TakenAt:          item.TakenAt,
+			PlaceName:        item.PlaceName,
+			PlaceCountryCode: item.PlaceCountryCode,
+			PlaceLatitude:    item.PlaceLatitude,
+			PlaceLongitude:   item.PlaceLongitude,
+			CreatedAt:        item.CreatedAt,
 		})
 	}
 

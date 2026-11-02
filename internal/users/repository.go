@@ -31,6 +31,8 @@ type Repository interface {
 	UpdateLocation(ctx context.Context, userID uuid.UUID, locationID uuid.UUID, input UpdateUserLocationInput) (UserLocationPin, error)
 	DeleteLocation(ctx context.Context, userID uuid.UUID, locationID uuid.UUID) error
 	CreateMedia(ctx context.Context, userID uuid.UUID, input CreateUserMediaInput) (UserMediaAsset, error)
+	DeleteMedia(ctx context.Context, userID uuid.UUID, mediaID uuid.UUID) (*uuid.UUID, error)
+	UpdateMedia(ctx context.Context, userID uuid.UUID, mediaID uuid.UUID, input UpdateUserMediaInput) (UserMediaAsset, error)
 	UpsertVerifiedAchievement(ctx context.Context, userID uuid.UUID, input VerifyAchievementInput) (UserBadge, error)
 }
 
@@ -315,6 +317,9 @@ func (r *PostgresRepository) ListLocationPins(ctx context.Context, userID uuid.U
 			l.latitude,
 			l.longitude,
 			l.country_code,
+			l.visited_at,
+			l.visited_until,
+			l.is_album,
 			thumb.thumbnail_url,
 			COALESCE(media.media_count, 0) AS media_count,
 			COALESCE((badge.achievement_count > 0), false) AS has_verified_achievement,
@@ -356,6 +361,9 @@ func (r *PostgresRepository) ListLocationPins(ctx context.Context, userID uuid.U
 			&pin.Latitude,
 			&pin.Longitude,
 			&pin.CountryCode,
+			&pin.VisitedAt,
+			&pin.VisitedUntil,
+			&pin.IsAlbum,
 			&pin.ThumbnailURL,
 			&pin.MediaCount,
 			&pin.HasVerifiedAchievement,
@@ -371,7 +379,7 @@ func (r *PostgresRepository) ListLocationPins(ctx context.Context, userID uuid.U
 
 func (r *PostgresRepository) ListMedia(ctx context.Context, userID uuid.UUID, limit int) ([]UserMediaAsset, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, user_id, location_id, media_type, url, thumbnail_url, caption, image_id, created_at
+		SELECT id, user_id, location_id, media_type, url, thumbnail_url, caption, image_id, taken_at, place_name, place_country_code, place_latitude, place_longitude, created_at
 		FROM public.user_media_assets
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -385,7 +393,7 @@ func (r *PostgresRepository) ListMedia(ctx context.Context, userID uuid.UUID, li
 	items := make([]UserMediaAsset, 0)
 	for rows.Next() {
 		var item UserMediaAsset
-		if scanErr := rows.Scan(&item.ID, &item.UserID, &item.LocationID, &item.MediaType, &item.URL, &item.ThumbnailURL, &item.Caption, &item.ImageID, &item.CreatedAt); scanErr != nil {
+		if scanErr := rows.Scan(&item.ID, &item.UserID, &item.LocationID, &item.MediaType, &item.URL, &item.ThumbnailURL, &item.Caption, &item.ImageID, &item.TakenAt, &item.PlaceName, &item.PlaceCountryCode, &item.PlaceLatitude, &item.PlaceLongitude, &item.CreatedAt); scanErr != nil {
 			return nil, scanErr
 		}
 		items = append(items, item)
@@ -452,21 +460,24 @@ func (r *PostgresRepository) listBadgesLegacy(ctx context.Context, userID uuid.U
 func (r *PostgresRepository) CreateLocation(ctx context.Context, userID uuid.UUID, input CreateUserLocationInput) (UserLocationPin, error) {
 	var locationID uuid.UUID
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO public.user_locations (user_id, name, latitude, longitude, country_code, visited_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO public.user_locations (user_id, name, latitude, longitude, country_code, visited_at, visited_until, is_album)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id
-	`, userID, input.Name, input.Latitude, input.Longitude, input.CountryCode, input.VisitedAt).Scan(&locationID)
+	`, userID, input.Name, input.Latitude, input.Longitude, input.CountryCode, input.VisitedAt, input.VisitedUntil, input.IsAlbum).Scan(&locationID)
 	if err != nil {
 		return UserLocationPin{}, err
 	}
 
 	pin := UserLocationPin{
-		LocationID:  locationID,
-		Name:        input.Name,
-		Latitude:    input.Latitude,
-		Longitude:   input.Longitude,
-		CountryCode: input.CountryCode,
-		MediaCount:  0,
+		LocationID:   locationID,
+		Name:         input.Name,
+		Latitude:     input.Latitude,
+		Longitude:    input.Longitude,
+		CountryCode:  input.CountryCode,
+		VisitedAt:    input.VisitedAt,
+		VisitedUntil: input.VisitedUntil,
+		IsAlbum:      input.IsAlbum,
+		MediaCount:   0,
 	}
 	return pin, nil
 }
@@ -475,15 +486,20 @@ func (r *PostgresRepository) UpdateLocation(ctx context.Context, userID uuid.UUI
 	var updated UserLocationPin
 	err := r.pool.QueryRow(ctx, `
 		UPDATE public.user_locations
-		SET name = $3, latitude = $4, longitude = $5, country_code = $6
+		SET name = $3, latitude = $4, longitude = $5, country_code = $6,
+			visited_at = COALESCE($7, visited_at),
+			visited_until = COALESCE($8, visited_until)
 		WHERE id = $1 AND user_id = $2
-		RETURNING id, name, latitude, longitude, country_code
-	`, locationID, userID, input.Name, input.Latitude, input.Longitude, input.CountryCode).Scan(
+		RETURNING id, name, latitude, longitude, country_code, visited_at, visited_until, is_album
+	`, locationID, userID, input.Name, input.Latitude, input.Longitude, input.CountryCode, input.VisitedAt, input.VisitedUntil).Scan(
 		&updated.LocationID,
 		&updated.Name,
 		&updated.Latitude,
 		&updated.Longitude,
 		&updated.CountryCode,
+		&updated.VisitedAt,
+		&updated.VisitedUntil,
+		&updated.IsAlbum,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -509,6 +525,23 @@ func (r *PostgresRepository) DeleteLocation(ctx context.Context, userID uuid.UUI
 	return nil
 }
 
+// DeleteMedia removes an owned media asset and returns its linked image id, if any.
+func (r *PostgresRepository) DeleteMedia(ctx context.Context, userID uuid.UUID, mediaID uuid.UUID) (*uuid.UUID, error) {
+	var imageID *uuid.UUID
+	err := r.pool.QueryRow(ctx, `
+		DELETE FROM public.user_media_assets
+		WHERE id = $1 AND user_id = $2
+		RETURNING image_id
+	`, mediaID, userID).Scan(&imageID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return imageID, nil
+}
+
 func (r *PostgresRepository) CreateMedia(ctx context.Context, userID uuid.UUID, input CreateUserMediaInput) (UserMediaAsset, error) {
 	var ownerID uuid.UUID
 	err := r.pool.QueryRow(ctx, `
@@ -529,10 +562,10 @@ func (r *PostgresRepository) CreateMedia(ctx context.Context, userID uuid.UUID, 
 
 	item := UserMediaAsset{}
 	err = r.pool.QueryRow(ctx, `
-		INSERT INTO public.user_media_assets (user_id, location_id, media_type, url, thumbnail_url, caption, image_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, user_id, location_id, media_type, url, thumbnail_url, caption, image_id, created_at
-	`, userID, input.LocationID, input.MediaType, input.URL, input.ThumbnailURL, input.Caption, input.ImageID).Scan(
+		INSERT INTO public.user_media_assets (user_id, location_id, media_type, url, thumbnail_url, caption, image_id, taken_at, place_name, place_country_code, place_latitude, place_longitude)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id, user_id, location_id, media_type, url, thumbnail_url, caption, image_id, taken_at, place_name, place_country_code, place_latitude, place_longitude, created_at
+	`, userID, input.LocationID, input.MediaType, input.URL, input.ThumbnailURL, input.Caption, input.ImageID, input.TakenAt, input.PlaceName, input.PlaceCountryCode, input.PlaceLatitude, input.PlaceLongitude).Scan(
 		&item.ID,
 		&item.UserID,
 		&item.LocationID,
@@ -541,9 +574,48 @@ func (r *PostgresRepository) CreateMedia(ctx context.Context, userID uuid.UUID, 
 		&item.ThumbnailURL,
 		&item.Caption,
 		&item.ImageID,
+		&item.TakenAt,
+		&item.PlaceName,
+		&item.PlaceCountryCode,
+		&item.PlaceLatitude,
+		&item.PlaceLongitude,
 		&item.CreatedAt,
 	)
 	if err != nil {
+		return UserMediaAsset{}, err
+	}
+
+	return item, nil
+}
+
+// UpdateMedia updates the caption and photo date of an owned media asset.
+func (r *PostgresRepository) UpdateMedia(ctx context.Context, userID uuid.UUID, mediaID uuid.UUID, input UpdateUserMediaInput) (UserMediaAsset, error) {
+	var item UserMediaAsset
+	err := r.pool.QueryRow(ctx, `
+		UPDATE public.user_media_assets
+		SET caption = $3, taken_at = COALESCE($4, taken_at)
+		WHERE id = $1 AND user_id = $2
+		RETURNING id, user_id, location_id, media_type, url, thumbnail_url, caption, image_id, taken_at, place_name, place_country_code, place_latitude, place_longitude, created_at
+	`, mediaID, userID, input.Caption, input.TakenAt).Scan(
+		&item.ID,
+		&item.UserID,
+		&item.LocationID,
+		&item.MediaType,
+		&item.URL,
+		&item.ThumbnailURL,
+		&item.Caption,
+		&item.ImageID,
+		&item.TakenAt,
+		&item.PlaceName,
+		&item.PlaceCountryCode,
+		&item.PlaceLatitude,
+		&item.PlaceLongitude,
+		&item.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return UserMediaAsset{}, ErrNotFound
+		}
 		return UserMediaAsset{}, err
 	}
 

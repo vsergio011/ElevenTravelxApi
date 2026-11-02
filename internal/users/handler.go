@@ -29,6 +29,8 @@ type UserProfileService interface {
 	UpdateLocation(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, locationID uuid.UUID, input UpdateUserLocationInput) (UserLocationPin, error)
 	DeleteLocation(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, locationID uuid.UUID) error
 	AddMedia(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, input CreateUserMediaInput) (UserMediaAsset, error)
+	DeleteMedia(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, mediaID uuid.UUID) error
+	UpdateMedia(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, mediaID uuid.UUID, input UpdateUserMediaInput) (UserMediaAsset, error)
 	VerifyAchievement(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, input VerifyAchievementInput) (UserBadge, error)
 }
 
@@ -238,12 +240,20 @@ func (h *Handler) createLocation(writer http.ResponseWriter, request *http.Reque
 		visitedAt = &parsedAt
 	}
 
+	visitedUntil, err := parseOptionalRFC3339(body.VisitedUntil)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "validation_error", "Invalid request body", []response.ErrorDetail{{Field: "visited_until", Message: "must be RFC3339 date-time"}})
+		return
+	}
+
 	item, err := h.service.AddLocation(request.Context(), actorUser.UserID, targetUserID, CreateUserLocationInput{
-		Name:        body.Name,
-		Latitude:    body.Latitude,
-		Longitude:   body.Longitude,
-		CountryCode: body.CountryCode,
-		VisitedAt:   visitedAt,
+		Name:         body.Name,
+		Latitude:     body.Latitude,
+		Longitude:    body.Longitude,
+		CountryCode:  body.CountryCode,
+		VisitedAt:    visitedAt,
+		VisitedUntil: visitedUntil,
+		IsAlbum:      body.IsAlbum,
 	})
 	if err != nil {
 		h.writeDomainError(writer, err)
@@ -256,6 +266,9 @@ func (h *Handler) createLocation(writer http.ResponseWriter, request *http.Reque
 		Latitude:                 item.Latitude,
 		Longitude:                item.Longitude,
 		CountryCode:              item.CountryCode,
+		VisitedAt:                item.VisitedAt,
+		VisitedUntil:             item.VisitedUntil,
+		IsAlbum:                  item.IsAlbum,
 		ThumbnailURL:             item.ThumbnailURL,
 		MediaCount:               item.MediaCount,
 		HasVerifiedAchievement:   item.HasVerifiedAchievement,
@@ -288,11 +301,29 @@ func (h *Handler) updateLocation(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
+	var visitedAt *time.Time
+	if body.VisitedAt != nil {
+		parsedAt, parseErr := time.Parse(time.RFC3339, *body.VisitedAt)
+		if parseErr != nil {
+			response.WriteError(writer, http.StatusBadRequest, "validation_error", "Invalid request body", []response.ErrorDetail{{Field: "visited_at", Message: "must be RFC3339 date-time"}})
+			return
+		}
+		visitedAt = &parsedAt
+	}
+
+	visitedUntil, err := parseOptionalRFC3339(body.VisitedUntil)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "validation_error", "Invalid request body", []response.ErrorDetail{{Field: "visited_until", Message: "must be RFC3339 date-time"}})
+		return
+	}
+
 	item, err := h.service.UpdateLocation(request.Context(), actorUser.UserID, targetUserID, locationID, UpdateUserLocationInput{
-		Name:        body.Name,
-		Latitude:    body.Latitude,
-		Longitude:   body.Longitude,
-		CountryCode: body.CountryCode,
+		Name:         body.Name,
+		Latitude:     body.Latitude,
+		Longitude:    body.Longitude,
+		CountryCode:  body.CountryCode,
+		VisitedAt:    visitedAt,
+		VisitedUntil: visitedUntil,
 	})
 	if err != nil {
 		h.writeDomainError(writer, err)
@@ -305,6 +336,9 @@ func (h *Handler) updateLocation(writer http.ResponseWriter, request *http.Reque
 		Latitude:                 item.Latitude,
 		Longitude:                item.Longitude,
 		CountryCode:              item.CountryCode,
+		VisitedAt:                item.VisitedAt,
+		VisitedUntil:             item.VisitedUntil,
+		IsAlbum:                  item.IsAlbum,
 		ThumbnailURL:             item.ThumbnailURL,
 		MediaCount:               item.MediaCount,
 		HasVerifiedAchievement:   item.HasVerifiedAchievement,
@@ -374,13 +408,24 @@ func (h *Handler) createMedia(writer http.ResponseWriter, request *http.Request)
 		imageID = &parsedImageID
 	}
 
+	takenAt, err := parseOptionalRFC3339(body.TakenAt)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "validation_error", "Invalid request body", []response.ErrorDetail{{Field: "taken_at", Message: "must be RFC3339 date-time"}})
+		return
+	}
+
 	item, err := h.service.AddMedia(request.Context(), actorUser.UserID, targetUserID, CreateUserMediaInput{
-		LocationID:   locationID,
-		MediaType:    body.MediaType,
-		URL:          body.URL,
-		ThumbnailURL: body.ThumbnailURL,
-		Caption:      body.Caption,
-		ImageID:      imageID,
+		LocationID:       locationID,
+		MediaType:        body.MediaType,
+		URL:              body.URL,
+		ThumbnailURL:     body.ThumbnailURL,
+		Caption:          body.Caption,
+		ImageID:          imageID,
+		TakenAt:          takenAt,
+		PlaceName:        trimOptionalText(body.PlaceName),
+		PlaceCountryCode: trimOptionalText(body.PlaceCountryCode),
+		PlaceLatitude:    body.PlaceLatitude,
+		PlaceLongitude:   body.PlaceLongitude,
 	})
 	if err != nil {
 		h.writeDomainError(writer, err)
@@ -388,6 +433,63 @@ func (h *Handler) createMedia(writer http.ResponseWriter, request *http.Request)
 	}
 
 	response.WriteJSON(writer, http.StatusCreated, map[string]UserMediaAssetResponse{"data": {
+		ID:               item.ID,
+		LocationID:       item.LocationID,
+		MediaType:        item.MediaType,
+		URL:              item.URL,
+		ThumbnailURL:     item.ThumbnailURL,
+		Caption:          item.Caption,
+		ImageID:          item.ImageID,
+		TakenAt:          item.TakenAt,
+		PlaceName:        item.PlaceName,
+		PlaceCountryCode: item.PlaceCountryCode,
+		PlaceLatitude:    item.PlaceLatitude,
+		PlaceLongitude:   item.PlaceLongitude,
+		CreatedAt:        item.CreatedAt,
+	}})
+}
+
+func (h *Handler) updateMedia(writer http.ResponseWriter, request *http.Request) {
+	actorUser, ok := middleware.AuthUserFromContext(request.Context())
+	if !ok {
+		response.WriteError(writer, http.StatusUnauthorized, "unauthorized", "Authenticated user not found in request context", nil)
+		return
+	}
+
+	targetUserID, err := parseUUIDParam(request, "userId")
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid_path_param", err.Error(), nil)
+		return
+	}
+
+	mediaID, err := parseUUIDParam(request, "mediaId")
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid_path_param", err.Error(), nil)
+		return
+	}
+
+	var body UpdateUserMediaRequest
+	if err := decodeJSON(request, &body); err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid_json", "Invalid request body", nil)
+		return
+	}
+
+	takenAt, err := parseOptionalRFC3339(body.TakenAt)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "validation_error", "Invalid request body", []response.ErrorDetail{{Field: "taken_at", Message: "must be RFC3339 date-time"}})
+		return
+	}
+
+	item, err := h.service.UpdateMedia(request.Context(), actorUser.UserID, targetUserID, mediaID, UpdateUserMediaInput{
+		Caption: body.Caption,
+		TakenAt: takenAt,
+	})
+	if err != nil {
+		h.writeDomainError(writer, err)
+		return
+	}
+
+	response.WriteJSON(writer, http.StatusOK, map[string]UserMediaAssetResponse{"data": {
 		ID:           item.ID,
 		LocationID:   item.LocationID,
 		MediaType:    item.MediaType,
@@ -395,8 +497,58 @@ func (h *Handler) createMedia(writer http.ResponseWriter, request *http.Request)
 		ThumbnailURL: item.ThumbnailURL,
 		Caption:      item.Caption,
 		ImageID:      item.ImageID,
+		TakenAt:      item.TakenAt,
 		CreatedAt:    item.CreatedAt,
 	}})
+}
+
+func trimOptionalText(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func parseOptionalRFC3339(value *string) (*time.Time, error) {
+	if value == nil {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, *value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func (h *Handler) deleteMedia(writer http.ResponseWriter, request *http.Request) {
+	actorUser, ok := middleware.AuthUserFromContext(request.Context())
+	if !ok {
+		response.WriteError(writer, http.StatusUnauthorized, "unauthorized", "Authenticated user not found in request context", nil)
+		return
+	}
+
+	targetUserID, err := parseUUIDParam(request, "userId")
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid_path_param", err.Error(), nil)
+		return
+	}
+
+	mediaID, err := parseUUIDParam(request, "mediaId")
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid_path_param", err.Error(), nil)
+		return
+	}
+
+	if err := h.service.DeleteMedia(request.Context(), actorUser.UserID, targetUserID, mediaID); err != nil {
+		h.writeDomainError(writer, err)
+		return
+	}
+
+	response.WriteJSON(writer, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (h *Handler) verifyAchievement(writer http.ResponseWriter, request *http.Request) {
