@@ -24,6 +24,14 @@ type Config struct {
 	AeroDataBoxAPIKey   string
 	AeroDataBoxHost     string
 
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	R2Endpoint        string
+	R2Region          string
+	R2PublicBucket    string
+	R2PrivateBucket   string
+	R2PublicDomain    string
+
 	RegistrationEnabled            bool
 	RegistrationAccessCodeRequired bool
 	RegistrationAccessCode         string
@@ -43,6 +51,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	r2Endpoint := strings.TrimSpace(os.Getenv("R2_ENDPOINT"))
+	if accountID := strings.TrimSpace(os.Getenv("R2_ACCOUNT_ID")); r2Endpoint == "" && accountID != "" {
+		r2Endpoint = fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID)
+	}
+
 	cfg := Config{
 		Port:                           getEnv("PORT", "8080"),
 		DatabaseURL:                    os.Getenv("DATABASE_URL"),
@@ -56,6 +69,13 @@ func Load() (Config, error) {
 		MapboxAccessToken:              os.Getenv("MAPBOX_ACCESS_TOKEN"),
 		AeroDataBoxAPIKey:              os.Getenv("AERODATABOX_RAPIDAPI_KEY"),
 		AeroDataBoxHost:                getEnv("AERODATABOX_RAPIDAPI_HOST", "aerodatabox.p.rapidapi.com"),
+		R2AccessKeyID:                  strings.TrimSpace(os.Getenv("R2_ACCESS_KEY_ID")),
+		R2SecretAccessKey:              strings.TrimSpace(os.Getenv("R2_SECRET_ACCESS_KEY")),
+		R2Endpoint:                     r2Endpoint,
+		R2Region:                       getEnv("R2_REGION", "auto"),
+		R2PublicBucket:                 strings.TrimSpace(os.Getenv("R2_PUBLIC_BUCKET")),
+		R2PrivateBucket:                strings.TrimSpace(os.Getenv("R2_PRIVATE_BUCKET")),
+		R2PublicDomain:                 strings.TrimRight(strings.TrimSpace(os.Getenv("R2_PUBLIC_DOMAIN")), "/"),
 		RegistrationEnabled:            registrationEnabled,
 		RegistrationAccessCodeRequired: registrationAccessCodeRequired,
 		RegistrationAccessCode:         strings.TrimSpace(os.Getenv("REGISTRATION_ACCESS_CODE")),
@@ -82,6 +102,12 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// R2Configured reports whether every setting needed to talk to Cloudflare R2 is present.
+func (c Config) R2Configured() bool {
+	return c.R2AccessKeyID != "" && c.R2SecretAccessKey != "" && c.R2Endpoint != "" &&
+		c.R2PublicBucket != "" && c.R2PrivateBucket != "" && c.R2PublicDomain != ""
 }
 
 func (c Config) HTTPAddress() string {

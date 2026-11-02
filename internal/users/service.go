@@ -3,17 +3,47 @@ package users
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/eleventravel/eleventravel-api/internal/http/response"
+	"github.com/eleventravel/eleventravel-api/internal/storage"
 )
 
 type Service struct {
 	repository Repository
+	images     ImageStore
+}
+
+// ImageStore is the storage capability users needs to link uploaded images to profile media.
+type ImageStore interface {
+	AttachMediaImage(ctx context.Context, userID uuid.UUID, imageID uuid.UUID) (string, error)
+	ResolveURLs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 }
 
 func NewService(repository Repository) *Service {
 	return &Service{repository: repository}
+}
+
+func (s *Service) WithImageStore(images ImageStore) *Service {
+	s.images = images
+	return s
+}
+
+func translateStorageError(err error) error {
+	var validationErr storage.ValidationError
+	switch {
+	case errors.As(err, &validationErr):
+		return ValidationError{Details: validationErr.Details}
+	case errors.Is(err, storage.ErrNotFound):
+		return ValidationError{Details: []response.ErrorDetail{{Field: "image_id", Message: "image not found"}}}
+	case errors.Is(err, storage.ErrForbidden):
+		return ErrForbidden
+	default:
+		return err
+	}
 }
 
 // IsUsernameAvailable reports whether no profile currently uses the username (case-insensitive).
@@ -170,7 +200,56 @@ func (s *Service) AddMedia(ctx context.Context, actorUserID uuid.UUID, targetUse
 		return UserMediaAsset{}, err
 	}
 
-	return s.repository.CreateMedia(ctx, actorUserID, input)
+	if input.ImageID != nil {
+		if s.images == nil {
+			return UserMediaAsset{}, ValidationError{Details: []response.ErrorDetail{{Field: "image_id", Message: "image storage is not available"}}}
+		}
+		imageURL, err := s.images.AttachMediaImage(ctx, actorUserID, *input.ImageID)
+		if err != nil {
+			return UserMediaAsset{}, translateStorageError(err)
+		}
+		input.URL = imageURL
+	} else if strings.TrimSpace(input.URL) == "" {
+		return UserMediaAsset{}, ValidationError{Details: []response.ErrorDetail{{Field: "url", Message: "url or image_id is required"}}}
+	}
+
+	item, err := s.repository.CreateMedia(ctx, actorUserID, input)
+	if err != nil {
+		return UserMediaAsset{}, err
+	}
+
+	return s.resolveMediaURLs(ctx, []UserMediaAsset{item})[0], nil
+}
+
+// resolveMediaURLs replaces stored URLs with public or short-lived signed URLs for storage-backed media.
+func (s *Service) resolveMediaURLs(ctx context.Context, items []UserMediaAsset) []UserMediaAsset {
+	if s.images == nil {
+		return items
+	}
+
+	ids := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		if item.ImageID != nil {
+			ids = append(ids, *item.ImageID)
+		}
+	}
+	if len(ids) == 0 {
+		return items
+	}
+
+	urls, err := s.images.ResolveURLs(ctx, ids)
+	if err != nil {
+		log.Printf("users: resolve media urls failed: %v", err)
+		urls = map[uuid.UUID]string{}
+	}
+	for index := range items {
+		if items[index].ImageID == nil {
+			continue
+		}
+		items[index].URL = urls[*items[index].ImageID]
+	}
+
+	return items
 }
 
 func (s *Service) VerifyAchievement(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID, input VerifyAchievementInput) (UserBadge, error) {
@@ -209,6 +288,7 @@ func (s *Service) buildProfileView(ctx context.Context, actorUserID uuid.UUID, p
 		if err != nil {
 			return UserProfileView{}, err
 		}
+		mediaItems = s.resolveMediaURLs(ctx, mediaItems)
 	}
 
 	badgeItems := make([]UserBadge, 0)

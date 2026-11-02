@@ -35,6 +35,7 @@ type CreateUserMediaRequest struct {
 	URL          string  `json:"url"`
 	ThumbnailURL *string `json:"thumbnail_url"`
 	Caption      *string `json:"caption"`
+	ImageID      *string `json:"image_id"`
 }
 
 type VerifyAchievementRequest struct {
@@ -76,13 +77,14 @@ type UserLocationPinResponse struct {
 }
 
 type UserMediaAssetResponse struct {
-	ID           uuid.UUID `json:"id"`
-	LocationID   uuid.UUID `json:"location_id"`
-	MediaType    string    `json:"media_type"`
-	URL          string    `json:"url"`
-	ThumbnailURL *string   `json:"thumbnail_url"`
-	Caption      *string   `json:"caption"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           uuid.UUID  `json:"id"`
+	LocationID   uuid.UUID  `json:"location_id"`
+	MediaType    string     `json:"media_type"`
+	URL          string     `json:"url"`
+	ThumbnailURL *string    `json:"thumbnail_url"`
+	Caption      *string    `json:"caption"`
+	ImageID      *uuid.UUID `json:"image_id"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type UserBadgeResponse struct {
@@ -138,6 +140,7 @@ func toProfileResponse(view UserProfileView) UserProfileResponse {
 			URL:          item.URL,
 			ThumbnailURL: item.ThumbnailURL,
 			Caption:      item.Caption,
+			ImageID:      item.ImageID,
 			CreatedAt:    item.CreatedAt,
 		})
 	}

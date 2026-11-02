@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/eleventravel/eleventravel-api/internal/auth"
 	"github.com/eleventravel/eleventravel-api/internal/bookings"
@@ -15,6 +17,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/platform/auth/supabaseadmin"
 	"github.com/eleventravel/eleventravel-api/internal/platform/auth/supabasejwt"
 	"github.com/eleventravel/eleventravel-api/internal/platform/db"
+	"github.com/eleventravel/eleventravel-api/internal/storage"
 	"github.com/eleventravel/eleventravel-api/internal/users"
 )
 
@@ -62,8 +65,38 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	expenseService := expenses.NewService(expenseRepository, planningRepository)
 	expenseHandler := expenses.NewHandler(expenseService)
 
+	var objectStore storage.ObjectStore = storage.NewUnavailableStore()
+	if !cfg.R2Configured() {
+		log.Println("R2 not configured: set R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT (or R2_ACCOUNT_ID), R2_PUBLIC_BUCKET, R2_PRIVATE_BUCKET and R2_PUBLIC_DOMAIN; /v1/images endpoints will return 503")
+	}
+	if cfg.R2Configured() {
+		objectStore = storage.NewR2Store(storage.R2Settings{
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Endpoint:        cfg.R2Endpoint,
+			Region:          cfg.R2Region,
+		})
+	} else {
+		log.Println("R2 is not configured: image endpoints will answer 503")
+	}
+	storageService := storage.NewService(storage.NewPostgresRepository(pool), objectStore, storage.Settings{
+		PublicBucket:  cfg.R2PublicBucket,
+		PrivateBucket: cfg.R2PrivateBucket,
+		PublicDomain:  cfg.R2PublicDomain,
+	})
+	storageHandler := storage.NewHandler(storageService)
+	userService.WithImageStore(storageService)
+
+	cleanupCtx, stopCleanup := context.WithCancel(ctx)
+	if cfg.R2Configured() {
+		go storageService.RunCleanup(cleanupCtx, 15*time.Minute)
+	}
+
 	return &Application{
-		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, cfg.CORSAllowedOrigins),
-		Close:   pool.Close,
+		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, storageHandler, cfg.CORSAllowedOrigins),
+		Close: func() {
+			stopCleanup()
+			pool.Close()
+		},
 	}, nil
 }

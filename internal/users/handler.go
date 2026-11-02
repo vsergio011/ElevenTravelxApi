@@ -364,12 +364,23 @@ func (h *Handler) createMedia(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
+	var imageID *uuid.UUID
+	if body.ImageID != nil && strings.TrimSpace(*body.ImageID) != "" {
+		parsedImageID, parseErr := uuid.Parse(strings.TrimSpace(*body.ImageID))
+		if parseErr != nil {
+			response.WriteError(writer, http.StatusBadRequest, "validation_error", "Invalid request body", []response.ErrorDetail{{Field: "image_id", Message: "must be a valid UUID"}})
+			return
+		}
+		imageID = &parsedImageID
+	}
+
 	item, err := h.service.AddMedia(request.Context(), actorUser.UserID, targetUserID, CreateUserMediaInput{
 		LocationID:   locationID,
 		MediaType:    body.MediaType,
 		URL:          body.URL,
 		ThumbnailURL: body.ThumbnailURL,
 		Caption:      body.Caption,
+		ImageID:      imageID,
 	})
 	if err != nil {
 		h.writeDomainError(writer, err)
@@ -383,6 +394,7 @@ func (h *Handler) createMedia(writer http.ResponseWriter, request *http.Request)
 		URL:          item.URL,
 		ThumbnailURL: item.ThumbnailURL,
 		Caption:      item.Caption,
+		ImageID:      item.ImageID,
 		CreatedAt:    item.CreatedAt,
 	}})
 }

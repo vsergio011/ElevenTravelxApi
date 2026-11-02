@@ -73,6 +73,7 @@ type UserMediaAsset struct {
 	URL          string
 	ThumbnailURL *string
 	Caption      *string
+	ImageID      *uuid.UUID
 	CreatedAt    time.Time
 }
 
@@ -139,6 +140,7 @@ type CreateUserMediaInput struct {
 	URL          string
 	ThumbnailURL *string
 	Caption      *string
+	ImageID      *uuid.UUID
 }
 
 type VerifyAchievementInput struct {

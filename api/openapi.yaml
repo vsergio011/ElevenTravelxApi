@@ -453,6 +453,71 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
+  /v1/images/uploads:
+    post:
+      summary: Request a presigned PUT URL (5 min) to upload an already compressed image directly to Cloudflare R2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose, mime_type, size_bytes]
+              properties:
+                purpose: { type: string, enum: [avatar, profile_media] }
+                mime_type: { type: string, enum: [image/jpeg, image/png, image/webp] }
+                size_bytes: { type: integer, format: int64 }
+      responses:
+        '201':
+          description: Pending upload created. Upload with HTTP PUT using the returned headers, then call complete.
+        '400':
+          description: Validation error
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '429':
+          description: Too many pending uploads
+        '503':
+          description: Image storage is not configured
+  /v1/images/{imageId}/complete:
+    post:
+      summary: Verify the uploaded object (HeadObject, real size, format and dimensions) and confirm the image
+      parameters:
+        - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Image completed (avatar purposes also update the profile avatar_url)
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '409':
+          description: File not uploaded yet or upload URL expired
+  /v1/images/{imageId}/url:
+    get:
+      summary: Public URL or short-lived signed GET URL for an image, subject to visibility rules
+      parameters:
+        - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: URL and optional expires_at
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/images/{imageId}:
+    delete:
+      summary: Delete an owned image and its R2 object
+      parameters:
+        - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Image deleted
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
 components:
   securitySchemes:
     bearerAuth:

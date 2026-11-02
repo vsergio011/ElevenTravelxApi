@@ -371,7 +371,7 @@ func (r *PostgresRepository) ListLocationPins(ctx context.Context, userID uuid.U
 
 func (r *PostgresRepository) ListMedia(ctx context.Context, userID uuid.UUID, limit int) ([]UserMediaAsset, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, user_id, location_id, media_type, url, thumbnail_url, caption, created_at
+		SELECT id, user_id, location_id, media_type, url, thumbnail_url, caption, image_id, created_at
 		FROM public.user_media_assets
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -385,7 +385,7 @@ func (r *PostgresRepository) ListMedia(ctx context.Context, userID uuid.UUID, li
 	items := make([]UserMediaAsset, 0)
 	for rows.Next() {
 		var item UserMediaAsset
-		if scanErr := rows.Scan(&item.ID, &item.UserID, &item.LocationID, &item.MediaType, &item.URL, &item.ThumbnailURL, &item.Caption, &item.CreatedAt); scanErr != nil {
+		if scanErr := rows.Scan(&item.ID, &item.UserID, &item.LocationID, &item.MediaType, &item.URL, &item.ThumbnailURL, &item.Caption, &item.ImageID, &item.CreatedAt); scanErr != nil {
 			return nil, scanErr
 		}
 		items = append(items, item)
@@ -529,10 +529,10 @@ func (r *PostgresRepository) CreateMedia(ctx context.Context, userID uuid.UUID, 
 
 	item := UserMediaAsset{}
 	err = r.pool.QueryRow(ctx, `
-		INSERT INTO public.user_media_assets (user_id, location_id, media_type, url, thumbnail_url, caption)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, user_id, location_id, media_type, url, thumbnail_url, caption, created_at
-	`, userID, input.LocationID, input.MediaType, input.URL, input.ThumbnailURL, input.Caption).Scan(
+		INSERT INTO public.user_media_assets (user_id, location_id, media_type, url, thumbnail_url, caption, image_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, user_id, location_id, media_type, url, thumbnail_url, caption, image_id, created_at
+	`, userID, input.LocationID, input.MediaType, input.URL, input.ThumbnailURL, input.Caption, input.ImageID).Scan(
 		&item.ID,
 		&item.UserID,
 		&item.LocationID,
@@ -540,6 +540,7 @@ func (r *PostgresRepository) CreateMedia(ctx context.Context, userID uuid.UUID, 
 		&item.URL,
 		&item.ThumbnailURL,
 		&item.Caption,
+		&item.ImageID,
 		&item.CreatedAt,
 	)
 	if err != nil {
