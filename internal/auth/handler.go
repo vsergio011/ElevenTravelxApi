@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -108,6 +109,7 @@ func (h *Handler) writeDomainError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, ErrAuthProvider):
 		response.WriteError(writer, http.StatusBadGateway, "auth_provider_error", "The authentication provider could not complete the request", nil)
 	default:
+		log.Printf("auth: unexpected error: %v", err)
 		response.WriteError(writer, http.StatusInternalServerError, "internal_error", "Unexpected server error", nil)
 	}
 }

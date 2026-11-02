@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -270,6 +271,7 @@ func (h *Handler) writeDomainError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, ErrConflict):
 		response.WriteError(writer, http.StatusConflict, "conflict", "Resource already exists", nil)
 	default:
+		log.Printf("bookings: unexpected error: %v", err)
 		response.WriteError(writer, http.StatusInternalServerError, "internal_error", "Unexpected server error", nil)
 	}
 }

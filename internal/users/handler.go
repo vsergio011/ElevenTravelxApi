@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -628,6 +629,7 @@ func (h *Handler) writeDomainError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, ErrInvalidPrivacyValue):
 		response.WriteError(writer, http.StatusBadRequest, "validation_error", "Invalid privacy value", nil)
 	default:
+		log.Printf("users: unexpected error: %v", err)
 		response.WriteError(writer, http.StatusInternalServerError, "internal_error", "Unexpected server error", nil)
 	}
 }

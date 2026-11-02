@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -171,6 +172,7 @@ func (h *Handler) writeDomainError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, ErrForbidden):
 		response.WriteError(writer, http.StatusForbidden, "forbidden", "You do not have permission to perform this action", nil)
 	default:
+		log.Printf("expenses: unexpected error: %v", err)
 		response.WriteError(writer, http.StatusInternalServerError, "internal_error", "Unexpected server error", nil)
 	}
 }

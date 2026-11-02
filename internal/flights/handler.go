@@ -8,6 +8,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -204,6 +205,7 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrForbidden):
 		response.WriteError(w, 403, "forbidden", "You do not have permission to perform this action", nil)
 	default:
+		log.Printf("flights: unexpected error: %v", err)
 		response.WriteError(w, 500, "internal_error", "Unexpected server error", nil)
 	}
 }

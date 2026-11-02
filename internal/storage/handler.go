@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -186,6 +187,7 @@ func (h *Handler) writeDomainError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, ErrUnavailable):
 		response.WriteError(writer, http.StatusServiceUnavailable, "storage_unavailable", "Image storage is not available", nil)
 	default:
+		log.Printf("storage: unexpected error: %v", err)
 		response.WriteError(writer, http.StatusInternalServerError, "internal_error", "Unexpected server error", nil)
 	}
 }
