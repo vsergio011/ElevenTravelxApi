@@ -1,6 +1,7 @@
 package plannings
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -37,6 +38,17 @@ func validateCreatePlanningRequest(request CreatePlanningRequest) (CreatePlannin
 	startsAt, endsAt, dateDetails := validateDateRange(request.StartsAt, request.EndsAt)
 	details = append(details, dateDetails...)
 
+	status := StatusDraft
+	if request.Status != nil {
+		status = strings.TrimSpace(*request.Status)
+		if !isValidPlanningStatus(status) {
+			details = append(details, response.ErrorDetail{Field: "status", Message: fmt.Sprintf("status must be one of %s, %s, %s, %s", StatusDraft, StatusConfirmed, StatusInProgress, StatusFinished)})
+		}
+	}
+
+	participants, participantDetails := validateCreatePlanningParticipants(request.Participants)
+	details = append(details, participantDetails...)
+
 	if len(details) > 0 {
 		return CreatePlanningInput{}, ValidationError{Details: details}
 	}
@@ -48,7 +60,32 @@ func validateCreatePlanningRequest(request CreatePlanningRequest) (CreatePlannin
 		DestinationName: trimOptionalString(request.DestinationName),
 		StartsAt:        startsAt,
 		EndsAt:          endsAt,
+		Status:          status,
+		Participants:    participants,
 	}, nil
+}
+
+func validateCreatePlanningParticipants(requests []AddPlanningMemberRequest) ([]AddPlanningMemberInput, []response.ErrorDetail) {
+	participants := make([]AddPlanningMemberInput, 0, len(requests))
+	details := make([]response.ErrorDetail, 0)
+
+	for index, request := range requests {
+		participant, err := validateAddPlanningMemberRequest(request)
+		if err != nil {
+			var validationErr ValidationError
+			if errors.As(err, &validationErr) {
+				for _, detail := range validationErr.Details {
+					detail.Field = fmt.Sprintf("participants[%d].%s", index, detail.Field)
+					details = append(details, detail)
+				}
+			}
+			continue
+		}
+
+		participants = append(participants, participant)
+	}
+
+	return participants, details
 }
 
 func validateUpdatePlanningRequest(request UpdatePlanningRequest) (UpdatePlanningInput, error) {

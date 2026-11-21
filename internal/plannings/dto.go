@@ -7,12 +7,14 @@ import (
 )
 
 type CreatePlanningRequest struct {
-	GroupID         string  `json:"group_id"`
-	Name            string  `json:"name"`
-	Description     *string `json:"description"`
-	DestinationName *string `json:"destination_name"`
-	StartsAt        *string `json:"starts_at"`
-	EndsAt          *string `json:"ends_at"`
+	GroupID         string                     `json:"group_id"`
+	Name            string                     `json:"name"`
+	Description     *string                    `json:"description"`
+	DestinationName *string                    `json:"destination_name"`
+	StartsAt        *string                    `json:"starts_at"`
+	EndsAt          *string                    `json:"ends_at"`
+	Status          *string                    `json:"status"`
+	Participants    []AddPlanningMemberRequest `json:"participants"`
 }
 
 type UpdatePlanningRequest struct {

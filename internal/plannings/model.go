@@ -223,6 +223,8 @@ type CreatePlanningInput struct {
 	DestinationName *string
 	StartsAt        *time.Time
 	EndsAt          *time.Time
+	Status          string
+	Participants    []AddPlanningMemberInput
 }
 
 type UpdatePlanningInput struct {

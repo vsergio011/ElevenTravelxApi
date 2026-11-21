@@ -21,6 +21,14 @@ func (s *Service) CreatePlanning(ctx context.Context, actorUserID uuid.UUID, inp
 		return Planning{}, ValidationError{}
 	}
 
+	for index := range input.Participants {
+		userID, err := s.resolveMemberUserID(ctx, input.Participants[index])
+		if err != nil {
+			return Planning{}, err
+		}
+		input.Participants[index].UserID = userID
+	}
+
 	return s.repository.CreatePlanning(ctx, actorUserID, input)
 }
 
@@ -102,19 +110,30 @@ func (s *Service) AddMember(ctx context.Context, actorUserID uuid.UUID, planning
 		return PlanningMember{}, err
 	}
 
-	if input.UserID == uuid.Nil {
-		userID, err := s.repository.GetUserIDByEmail(ctx, input.Email)
-		if err != nil {
-			return PlanningMember{}, err
-		}
-		input.UserID = userID
+	userID, err := s.resolveMemberUserID(ctx, input)
+	if err != nil {
+		return PlanningMember{}, err
 	}
-
-	if input.UserID == uuid.Nil {
-		return PlanningMember{}, ErrUserNotFound
-	}
+	input.UserID = userID
 
 	return s.repository.AddMember(ctx, actorUserID, planningID, input)
+}
+
+func (s *Service) resolveMemberUserID(ctx context.Context, input AddPlanningMemberInput) (uuid.UUID, error) {
+	if input.UserID != uuid.Nil {
+		return input.UserID, nil
+	}
+
+	userID, err := s.repository.GetUserIDByEmail(ctx, input.Email)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	if userID == uuid.Nil {
+		return uuid.Nil, ErrUserNotFound
+	}
+
+	return userID, nil
 }
 
 func (s *Service) UpdateMemberRole(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, targetUserID uuid.UUID, input UpdatePlanningMemberRoleInput) (PlanningMember, error) {

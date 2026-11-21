@@ -59,6 +59,11 @@ func (r *PostgresRepository) CreatePlanning(ctx context.Context, actorUserID uui
 	}
 	defer tx.Rollback(ctx)
 
+	status := input.Status
+	if status == "" {
+		status = StatusDraft
+	}
+
 	planning := Planning{}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO public.plannings (
@@ -66,7 +71,7 @@ func (r *PostgresRepository) CreatePlanning(ctx context.Context, actorUserID uui
 		)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NULL, false)
 		RETURNING id, group_id, owner_user_id, name, description, destination_name, starts_at, ends_at, status, cover_image_url, is_archived, created_at, updated_at
-	`, input.GroupID, actorUserID, input.Name, input.Description, input.DestinationName, input.StartsAt, input.EndsAt, StatusDraft).Scan(
+	`, input.GroupID, actorUserID, input.Name, input.Description, input.DestinationName, input.StartsAt, input.EndsAt, status).Scan(
 		&planning.ID,
 		&planning.GroupID,
 		&planning.OwnerUserID,
@@ -88,6 +93,16 @@ func (r *PostgresRepository) CreatePlanning(ctx context.Context, actorUserID uui
 	member := AddPlanningMemberInput{UserID: actorUserID, Role: RoleOwner}
 	if _, err := r.addMemberTx(ctx, tx, actorUserID, planning.ID, member); err != nil {
 		return Planning{}, err
+	}
+
+	for _, participant := range input.Participants {
+		if _, err := r.addMemberTx(ctx, tx, actorUserID, planning.ID, participant); err != nil {
+			return Planning{}, err
+		}
+
+		if err := r.insertActivityTx(ctx, tx, planning.ID, &actorUserID, "member.added", "member", &participant.UserID, map[string]any{"role": participant.Role}); err != nil {
+			return Planning{}, err
+		}
 	}
 
 	if err := r.insertActivityTx(ctx, tx, planning.ID, &actorUserID, "planning.created", "planning", &planning.ID, map[string]any{"name": planning.Name}); err != nil {
