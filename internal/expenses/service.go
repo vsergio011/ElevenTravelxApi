@@ -174,6 +174,9 @@ func buildBudget(items []BudgetItem, memberIDs []uuid.UUID) Budget {
 		case SourceFlight:
 			totals.FlightsCents += item.AmountCents
 			totals.FlightsCount++
+		case SourceTransport:
+			totals.TransportsCents += item.AmountCents
+			totals.TransportsCount++
 		}
 		if item.Status != ItemConfirmed {
 			totals.PendingCents += item.AmountCents

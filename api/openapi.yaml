@@ -518,6 +518,84 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
+  /v1/plannings/{planningId}/transports:
+    parameters:
+      - $ref: '#/components/parameters/PlanningId'
+    get:
+      summary: List transport entries
+      responses:
+        '200':
+          description: Transport entries in departure order
+    post:
+      summary: Create a transport entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransportInput'
+      responses:
+        '201':
+          description: Created transport entry
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+  /v1/plannings/{planningId}/transports/{transportId}:
+    parameters:
+      - $ref: '#/components/parameters/PlanningId'
+      - name: transportId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get a transport entry
+      responses:
+        '200':
+          description: Transport entry
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    patch:
+      summary: Update a transport entry
+      description: Omitted fields are preserved. Use an empty payments array to remove recorded payments.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransportFields'
+      responses:
+        '200':
+          description: Updated transport entry
+        '400':
+          $ref: '#/components/responses/ErrorValidation'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+    delete:
+      summary: Delete a transport entry and its linked cost
+      responses:
+        '200':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+  /v1/plannings/{planningId}/transports/{transportId}/confirm:
+    parameters:
+      - $ref: '#/components/parameters/PlanningId'
+      - name: transportId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Toggle a transport between draft and confirmed
+      responses:
+        '200':
+          description: Updated transport entry
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
 components:
   securitySchemes:
     bearerAuth:
@@ -611,6 +689,76 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    TransportInput:
+      allOf:
+        - $ref: '#/components/schemas/TransportFields'
+        - type: object
+          required: [status, transport_type, origin, destination, cost_cents, currency, cost_distribution]
+    TransportFields:
+      type: object
+      description: Dates and times are local to the journey. Payments are explicit and never inferred from the creator.
+      properties:
+        status:
+          type: string
+          enum: [draft, confirmed]
+        transport_type:
+          type: string
+          enum: [train, bus, urban, ferry, taxi, rental_car, other]
+        origin:
+          type: string
+        destination:
+          type: string
+        departure_date:
+          type: string
+          format: date
+          nullable: true
+        departure_time:
+          type: string
+          example: '09:30'
+          nullable: true
+        arrival_date:
+          type: string
+          format: date
+          nullable: true
+        arrival_time:
+          type: string
+          example: '10:30'
+          nullable: true
+        operator:
+          type: string
+          nullable: true
+        reference:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        cost_cents:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+          enum: [EUR, USD]
+        cost_distribution:
+          type: string
+          enum: [individual, group, selected_participants]
+        participant_user_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        payments:
+          type: array
+          items:
+            type: object
+            required: [user_id, amount_cents]
+            properties:
+              user_id:
+                type: string
+                format: uuid
+              amount_cents:
+                type: integer
+                minimum: 1
     CreatePlanningRequest:
       type: object
       required: [group_id, name]

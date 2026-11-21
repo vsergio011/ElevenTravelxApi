@@ -71,9 +71,10 @@ type UpdateExpenseInput struct {
 }
 
 const (
-	SourceExpense = "expense"
-	SourceBooking = "booking"
-	SourceFlight  = "flight"
+	SourceExpense   = "expense"
+	SourceBooking   = "booking"
+	SourceFlight    = "flight"
+	SourceTransport = "transport"
 
 	ItemConfirmed = "confirmed"
 	ItemPending   = "pending"
@@ -96,15 +97,17 @@ type BudgetItem struct {
 }
 
 type BudgetTotals struct {
-	TotalCents     int64
-	ConfirmedCents int64
-	PendingCents   int64
-	ExpensesCents  int64
-	BookingsCents  int64
-	FlightsCents   int64
-	ExpensesCount  int
-	BookingsCount  int
-	FlightsCount   int
+	TotalCents      int64
+	ConfirmedCents  int64
+	PendingCents    int64
+	ExpensesCents   int64
+	BookingsCents   int64
+	FlightsCents    int64
+	TransportsCents int64
+	ExpensesCount   int
+	BookingsCount   int
+	FlightsCount    int
+	TransportsCount int
 }
 
 type MemberBalance struct {

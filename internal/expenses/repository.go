@@ -32,12 +32,13 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 // The linked flight/booking status is joined only to mark the expense pending until it is confirmed.
 const expenseSelect = `
-	SELECT e.id, e.planning_id, e.created_by_user_id, e.planning_item_id, pi.item_type, COALESCE(f.status, b.status), COALESCE(f.id, b.id),
+	SELECT e.id, e.planning_id, e.created_by_user_id, e.planning_item_id, pi.item_type, COALESCE(f.status, b.status, t.status), COALESCE(f.id, b.id, t.id),
 		e.title, e.amount_cents, e.currency, e.distribution, e.category, e.notes, e.spent_at, e.created_at, e.updated_at
 	FROM public.expenses e
 	LEFT JOIN public.planning_items pi ON pi.id = e.planning_item_id
 	LEFT JOIN public.flights f ON f.planning_item_id = pi.id
-	LEFT JOIN public.bookings b ON b.planning_item_id = pi.id`
+	LEFT JOIN public.bookings b ON b.planning_item_id = pi.id
+	LEFT JOIN public.transports t ON t.planning_item_id = pi.id`
 
 func scanExpense(row pgx.Row) (Expense, error) {
 	var expense Expense

@@ -18,6 +18,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/platform/auth/supabasejwt"
 	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 	"github.com/eleventravel/eleventravel-api/internal/storage"
+	"github.com/eleventravel/eleventravel-api/internal/transports"
 	"github.com/eleventravel/eleventravel-api/internal/users"
 )
 
@@ -64,6 +65,7 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	expenseRepository := expenses.NewPostgresRepository(pool)
 	expenseService := expenses.NewService(expenseRepository, planningRepository)
 	expenseHandler := expenses.NewHandler(expenseService)
+	transportHandler := transports.NewHandler(transports.NewService(transports.NewPostgresRepository(pool), planningRepository))
 
 	var objectStore storage.ObjectStore = storage.NewUnavailableStore()
 	if !cfg.R2Configured() {
@@ -93,7 +95,7 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	}
 
 	return &Application{
-		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, storageHandler, cfg.CORSAllowedOrigins),
+		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, storageHandler, transportHandler, cfg.CORSAllowedOrigins),
 		Close: func() {
 			stopCleanup()
 			pool.Close()

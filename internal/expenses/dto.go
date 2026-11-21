@@ -138,15 +138,17 @@ type BudgetItemResponse struct {
 }
 
 type BudgetTotalsResponse struct {
-	TotalCents     int64 `json:"total_cents"`
-	ConfirmedCents int64 `json:"confirmed_cents"`
-	PendingCents   int64 `json:"pending_cents"`
-	ExpensesCents  int64 `json:"expenses_cents"`
-	BookingsCents  int64 `json:"bookings_cents"`
-	FlightsCents   int64 `json:"flights_cents"`
-	ExpensesCount  int   `json:"expenses_count"`
-	BookingsCount  int   `json:"bookings_count"`
-	FlightsCount   int   `json:"flights_count"`
+	TotalCents      int64 `json:"total_cents"`
+	ConfirmedCents  int64 `json:"confirmed_cents"`
+	PendingCents    int64 `json:"pending_cents"`
+	ExpensesCents   int64 `json:"expenses_cents"`
+	BookingsCents   int64 `json:"bookings_cents"`
+	FlightsCents    int64 `json:"flights_cents"`
+	TransportsCents int64 `json:"transports_cents"`
+	ExpensesCount   int   `json:"expenses_count"`
+	BookingsCount   int   `json:"bookings_count"`
+	FlightsCount    int   `json:"flights_count"`
+	TransportsCount int   `json:"transports_count"`
 }
 
 type MemberBalanceResponse struct {
@@ -207,8 +209,8 @@ func NewBudgetResponse(budget Budget) BudgetResponse {
 		Items:    items,
 		Totals: BudgetTotalsResponse{
 			TotalCents: totals.TotalCents, ConfirmedCents: totals.ConfirmedCents, PendingCents: totals.PendingCents,
-			ExpensesCents: totals.ExpensesCents, BookingsCents: totals.BookingsCents, FlightsCents: totals.FlightsCents,
-			ExpensesCount: totals.ExpensesCount, BookingsCount: totals.BookingsCount, FlightsCount: totals.FlightsCount,
+			ExpensesCents: totals.ExpensesCents, BookingsCents: totals.BookingsCents, FlightsCents: totals.FlightsCents, TransportsCents: totals.TransportsCents,
+			ExpensesCount: totals.ExpensesCount, BookingsCount: totals.BookingsCount, FlightsCount: totals.FlightsCount, TransportsCount: totals.TransportsCount,
 		},
 		Members:     members,
 		Settlements: settlements,

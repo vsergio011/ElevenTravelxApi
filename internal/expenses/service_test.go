@@ -115,6 +115,31 @@ func TestLinkedPendingItemStaysOutOfBalances(t *testing.T) {
 	require.Empty(t, budget.Settlements)
 }
 
+func TestTransportBudgetStatusAndBalances(t *testing.T) {
+	owner, member, transportID := uuid.New(), uuid.New(), uuid.New()
+	status, itemType := "draft", SourceTransport
+	expense := Expense{ID: uuid.New(), ItemRefID: &transportID, AmountCents: 1001, Distribution: DistributionGroup,
+		ItemType: &itemType, ItemStatus: &status, SpentAt: time.Now()}
+	item := budgetItemFromExpense(expense, []uuid.UUID{owner, member})
+	pending := buildBudget([]BudgetItem{item}, []uuid.UUID{owner, member})
+	require.Equal(t, transportID, item.SourceID)
+	require.Equal(t, int64(1001), pending.Totals.PendingCents)
+	require.Equal(t, int64(1001), pending.Totals.TransportsCents)
+	require.Equal(t, 1, pending.Totals.TransportsCount)
+	require.Empty(t, pending.Settlements)
+
+	status = "confirmed"
+	item = budgetItemFromExpense(expense, []uuid.UUID{owner, member})
+	unpaid := buildBudget([]BudgetItem{item}, []uuid.UUID{owner, member})
+	require.Equal(t, int64(1001), unpaid.Totals.ConfirmedCents)
+	require.Empty(t, unpaid.Settlements)
+
+	expense.Payments = []Payment{{UserID: owner, AmountCents: 1001}}
+	paid := buildBudget([]BudgetItem{budgetItemFromExpense(expense, []uuid.UUID{owner, member})}, []uuid.UUID{owner, member})
+	require.Len(t, paid.Settlements, 1)
+	require.Equal(t, int64(1001), paid.Members[0].OwedCents+paid.Members[1].OwedCents)
+}
+
 func TestCreateExpenseRejectsInvalidCustomShares(t *testing.T) {
 	service, planning, owner, member, _ := setup()
 	_, err := service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
