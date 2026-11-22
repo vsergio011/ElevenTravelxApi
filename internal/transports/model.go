@@ -101,10 +101,20 @@ func (s *Service) validate(ctx context.Context, planning uuid.UUID, input Input)
 		}
 	}
 	if input.Payments != nil {
+		ledgerPayments := make([]expenseledger.Payment, 0, len(*input.Payments))
 		for _, payment := range *input.Payments {
 			if !allowed[payment.UserID] {
 				return ErrForbidden
 			}
+			ledgerPayments = append(ledgerPayments, expenseledger.Payment{
+				UserID: payment.UserID, AmountCents: payment.AmountCents, PaidAt: payment.PaidAt,
+			})
+		}
+		if expenseledger.ValidatePayments(
+			expenseledger.EconomicTotal(input.CostDistribution, input.CostCents, len(members)),
+			ledgerPayments,
+		) != nil {
+			return fmt.Errorf("%w: payments exceed the distributed total", ErrValidation)
 		}
 	}
 	return nil
@@ -157,13 +167,11 @@ func validateInput(input Input) error {
 			return fmt.Errorf("%w: arrival must not precede departure", ErrValidation)
 		}
 	}
-	var paid int64
 	if input.Payments != nil {
 		for _, payment := range *input.Payments {
-			if payment.UserID == uuid.Nil || payment.AmountCents <= 0 || payment.AmountCents > input.CostCents-paid {
+			if payment.UserID == uuid.Nil || payment.AmountCents <= 0 {
 				return fmt.Errorf("%w: invalid payments", ErrValidation)
 			}
-			paid += payment.AmountCents
 		}
 	}
 	return nil

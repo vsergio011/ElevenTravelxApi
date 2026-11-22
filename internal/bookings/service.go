@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
+	"github.com/eleventravel/eleventravel-api/internal/http/response"
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
 )
 
@@ -39,6 +41,9 @@ func (s *Service) CreateBooking(ctx context.Context, actorUserID uuid.UUID, plan
 		}
 	}
 	if err := s.validatePlanningUsers(ctx, planningID, input.ParticipantUserIDs, input.Payments); err != nil {
+		return Booking{}, err
+	}
+	if err := s.validatePaymentTotal(ctx, planningID, input.CostDistribution, input.CostCents, input.Payments); err != nil {
 		return Booking{}, err
 	}
 
@@ -90,8 +95,49 @@ func (s *Service) UpdateBooking(ctx context.Context, actorUserID uuid.UUID, plan
 			return Booking{}, err
 		}
 	}
+	mergedCost := booking.CostCents
+	if input.CostCents != nil {
+		mergedCost = *input.CostCents
+	}
+	mergedDistribution := booking.CostDistribution
+	if input.CostDistribution != nil {
+		mergedDistribution = *input.CostDistribution
+	}
+	mergedPayments := booking.Payments
+	if input.Payments != nil {
+		mergedPayments = *input.Payments
+	}
+	if err := s.validatePaymentTotal(ctx, planningID, mergedDistribution, mergedCost, mergedPayments); err != nil {
+		return Booking{}, err
+	}
 
 	return s.repository.UpdateBooking(ctx, planningID, bookingID, input)
+}
+
+func (s *Service) validatePaymentTotal(ctx context.Context, planningID uuid.UUID, distribution string, amount int64, payments []Payment) error {
+	lister, ok := s.membership.(PlanningMembersLister)
+	if !ok {
+		return nil
+	}
+	members, err := lister.ListMembers(ctx, planningID)
+	if err != nil {
+		return err
+	}
+	ledgerPayments := make([]expenseledger.Payment, 0, len(payments))
+	for _, payment := range payments {
+		ledgerPayments = append(ledgerPayments, expenseledger.Payment{
+			UserID: payment.UserID, AmountCents: payment.AmountCents, PaidAt: payment.PaidAt,
+		})
+	}
+	if err := expenseledger.ValidatePayments(
+		expenseledger.EconomicTotal(distribution, amount, len(members)),
+		ledgerPayments,
+	); err != nil {
+		return ValidationError{Details: []response.ErrorDetail{{
+			Field: "payments", Message: "payments cannot exceed the distributed total",
+		}}}
+	}
+	return nil
 }
 
 func (s *Service) ConfirmBooking(ctx context.Context, actorUserID uuid.UUID, planningID uuid.UUID, bookingID uuid.UUID) (Booking, error) {

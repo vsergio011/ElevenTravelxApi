@@ -76,6 +76,14 @@ func validateCreateBookingRequest(request CreateBookingRequest) (CreateBookingIn
 	if distribution == DistributionSelectedParticipants && len(request.ParticipantUserIDs) == 0 {
 		details = append(details, response.ErrorDetail{Field: "participant_user_ids", Message: "at least one participant is required"})
 	}
+	seenParticipants := make(map[uuid.UUID]struct{}, len(request.ParticipantUserIDs))
+	for _, participantID := range request.ParticipantUserIDs {
+		if _, exists := seenParticipants[participantID]; exists {
+			details = append(details, response.ErrorDetail{Field: "participant_user_ids", Message: "participant_user_ids must not be repeated"})
+			break
+		}
+		seenParticipants[participantID] = struct{}{}
+	}
 	if len(details) > 0 {
 		return CreateBookingInput{}, ValidationError{Details: details}
 	}
@@ -158,6 +166,16 @@ func validateUpdateBookingRequest(request UpdateBookingRequest) (UpdateBookingIn
 	}
 	if request.CostDistribution != nil && strings.TrimSpace(*request.CostDistribution) == DistributionSelectedParticipants && (request.ParticipantUserIDs == nil || len(*request.ParticipantUserIDs) == 0) {
 		details = append(details, response.ErrorDetail{Field: "participant_user_ids", Message: "at least one participant is required"})
+	}
+	if request.ParticipantUserIDs != nil {
+		seenParticipants := make(map[uuid.UUID]struct{}, len(*request.ParticipantUserIDs))
+		for _, participantID := range *request.ParticipantUserIDs {
+			if _, exists := seenParticipants[participantID]; exists {
+				details = append(details, response.ErrorDetail{Field: "participant_user_ids", Message: "participant_user_ids must not be repeated"})
+				break
+			}
+			seenParticipants[participantID] = struct{}{}
+		}
 	}
 	if len(details) > 0 {
 		return UpdateBookingInput{}, ValidationError{Details: details}

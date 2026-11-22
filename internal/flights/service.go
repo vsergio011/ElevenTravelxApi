@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
 	"github.com/google/uuid"
@@ -39,6 +40,9 @@ func (s *Service) Create(ctx context.Context, actor, planning uuid.UUID, input C
 		return Flight{}, err
 	}
 	if err := validateInput(input); err != nil {
+		return Flight{}, err
+	}
+	if err := s.validatePaymentTotal(ctx, planning, input.CostDistribution, input.CostCents, input.Payments); err != nil {
 		return Flight{}, err
 	}
 	return s.repository.Create(ctx, actor, planning, input)
@@ -108,14 +112,38 @@ func (s *Service) Update(ctx context.Context, actor, planning, id uuid.UUID, inp
 	if input.Segments != nil {
 		merged.Segments = *input.Segments
 	}
-	var payments []Payment
+	payments := flight.Payments
 	if input.Payments != nil {
 		payments = *input.Payments
 	}
 	if err = validateInput(CreateInput{Status: merged.Status, CostCents: merged.CostCents, Currency: merged.Currency, CostDistribution: merged.CostDistribution, ParticipantUserIDs: merged.ParticipantUserIDs, Payments: payments, Segments: merged.Segments}); err != nil {
 		return Flight{}, err
 	}
+	if err = s.validatePaymentTotal(ctx, planning, merged.CostDistribution, merged.CostCents, payments); err != nil {
+		return Flight{}, err
+	}
 	return s.repository.Update(ctx, planning, id, input)
+}
+
+func (s *Service) validatePaymentTotal(ctx context.Context, planning uuid.UUID, distribution string, amount int64, payments []Payment) error {
+	lister, ok := s.membership.(PlanningMembersLister)
+	if !ok {
+		return ErrForbidden
+	}
+	members, err := lister.ListMembers(ctx, planning)
+	if err != nil {
+		return err
+	}
+	if err := expenseledger.ValidatePayments(
+		expenseledger.EconomicTotal(distribution, amount, len(members)),
+		payments,
+	); err != nil {
+		return newValidationError([]response.ErrorDetail{{
+			Field:   "payments",
+			Message: "payments cannot exceed the distributed total",
+		}})
+	}
+	return nil
 }
 func (s *Service) Confirm(ctx context.Context, actor, planning, id uuid.UUID) (Flight, error) {
 	flight, err := s.repository.Get(ctx, planning, id)

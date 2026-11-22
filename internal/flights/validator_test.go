@@ -64,7 +64,7 @@ func TestValidateInputAllowsOneWayFlight(t *testing.T) {
 func TestValidatePaymentsUsesCentsAndCapsAtFlightCost(t *testing.T) {
 	payerID := uuid.New()
 	payments := []Payment{{UserID: payerID, AmountCents: 1250}}
-	if err := validatePayments(2500, payments); err != nil {
+	if err := validatePayments(payments, 2500, DistributionGroup); err != nil {
 		t.Fatalf("expected a valid partial payment, got %v", err)
 	}
 
@@ -84,9 +84,14 @@ func TestValidatePaymentsUsesCentsAndCapsAtFlightCost(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := validatePayments(test.cost, test.payments); err == nil {
+			if err := validatePayments(test.payments, test.cost, DistributionGroup); err == nil {
 				t.Fatal("expected invalid payment list to be rejected")
 			}
 		})
+	}
+
+	individualPayment := []Payment{{UserID: payerID, AmountCents: 5000}}
+	if err := validatePayments(individualPayment, 2500, DistributionIndividual); err != nil {
+		t.Fatalf("individual prices may use a payment covering multiple member shares, got %v", err)
 	}
 }

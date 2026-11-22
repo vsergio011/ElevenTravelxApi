@@ -167,6 +167,35 @@ func TestComputeSharesSplitsRemainder(t *testing.T) {
 	require.Equal(t, int64(100), total)
 }
 
+func TestBudgetExpandsIndividualPriceToEconomicTotal(t *testing.T) {
+	first, second := uuid.New(), uuid.New()
+	expense := Expense{
+		ID: uuid.New(), AmountCents: 24000, Distribution: DistributionIndividual,
+		Payments: []Payment{{UserID: first, AmountCents: 48000}}, SpentAt: time.Now(),
+	}
+	item := budgetItemFromExpense(expense, []uuid.UUID{first, second})
+	require.Equal(t, int64(48000), item.AmountCents)
+	require.Equal(t, "paid", item.PaymentStatus)
+	require.Len(t, item.Shares, 2)
+	require.Equal(t, int64(24000), item.Shares[0].Cents)
+	require.Equal(t, int64(24000), item.Shares[1].Cents)
+}
+
+func TestCreateExpenseValidatesPaymentsAgainstIndividualTotal(t *testing.T) {
+	service, planning, owner, _, _ := setup()
+	_, err := service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
+		Title: "Entradas", AmountCents: 1000, Distribution: DistributionIndividual,
+		Payments: []Payment{{UserID: owner, AmountCents: 2000}},
+	})
+	require.NoError(t, err)
+
+	_, err = service.CreateExpense(context.Background(), owner, planning, CreateExpenseInput{
+		Title: "Entradas", AmountCents: 1000, Distribution: DistributionIndividual,
+		Payments: []Payment{{UserID: owner, AmountCents: 2001}},
+	})
+	require.ErrorAs(t, err, &ValidationError{})
+}
+
 func TestSuggestSettlementsBalancesDebts(t *testing.T) {
 	a, b := uuid.New(), uuid.New()
 	settlements := suggestSettlements(map[uuid.UUID]int64{a: 500, b: -500})

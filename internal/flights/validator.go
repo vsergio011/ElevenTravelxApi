@@ -31,7 +31,7 @@ func validateInput(input CreateInput) error {
 	if err := validateParticipantIDs(input.ParticipantUserIDs); err != nil {
 		details = append(details, response.ErrorDetail{Field: "participant_user_ids", Message: err.Error()})
 	}
-	if err := validatePayments(input.CostCents, input.Payments); err != nil {
+	if err := validatePayments(input.Payments, input.CostCents, input.CostDistribution); err != nil {
 		details = append(details, response.ErrorDetail{Field: "payments", Message: err.Error()})
 	}
 	if len(details) > 0 {
@@ -40,10 +40,11 @@ func validateInput(input CreateInput) error {
 	return nil
 }
 
-func validatePayments(costCents int64, payments []Payment) error {
+func validatePayments(payments []Payment, costCents int64, distribution string) error {
 	var total int64
 	for _, payment := range payments {
-		if payment.UserID == uuid.Nil || payment.AmountCents <= 0 || payment.AmountCents > costCents-total {
+		if payment.UserID == uuid.Nil || payment.AmountCents <= 0 ||
+			(distribution != DistributionIndividual && payment.AmountCents > costCents-total) {
 			return fmt.Errorf("payments must have valid members and positive amounts not exceeding the flight cost")
 		}
 		total += payment.AmountCents
@@ -101,10 +102,15 @@ func validDistribution(value string) bool {
 }
 
 func validateParticipantIDs(ids []uuid.UUID) error {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
 	for _, id := range ids {
 		if id == uuid.Nil {
 			return fmt.Errorf("participant ids must be valid UUIDs")
 		}
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("participant ids must not be repeated")
+		}
+		seen[id] = struct{}{}
 	}
 	return nil
 }

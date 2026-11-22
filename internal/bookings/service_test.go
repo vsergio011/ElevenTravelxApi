@@ -32,6 +32,16 @@ func (m *fakeMembership) GetPlanningRouteStopCreator(_ context.Context, _ uuid.U
 	return creatorUserID, nil
 }
 
+func (m *fakeMembership) ListMembers(_ context.Context, planningID uuid.UUID) ([]plannings.PlanningMember, error) {
+	result := []plannings.PlanningMember{}
+	for _, member := range m.members {
+		if member.PlanningID == planningID {
+			result = append(result, member)
+		}
+	}
+	return result, nil
+}
+
 type fakeRepository struct {
 	bookings map[uuid.UUID]Booking
 
@@ -43,6 +53,29 @@ type fakeRepository struct {
 
 func newFakeRepository() *fakeRepository {
 	return &fakeRepository{bookings: map[uuid.UUID]Booking{}}
+}
+
+func TestServiceRejectsPaymentsAboveEconomicTotal(t *testing.T) {
+	planning, owner, member := uuid.New(), uuid.New(), uuid.New()
+	membership := &fakeMembership{members: map[uuid.UUID]plannings.PlanningMember{
+		owner:  {UserID: owner, PlanningID: planning, Role: plannings.RoleOwner},
+		member: {UserID: member, PlanningID: planning, Role: plannings.RoleMember},
+	}}
+	repository := newFakeRepository()
+	service := NewService(repository, membership)
+
+	_, err := service.CreateBooking(context.Background(), owner, planning, CreateBookingInput{
+		Title: "Hotel", Type: TypeHotel, Status: StatusConfirmed, CostCents: 100,
+		CostDistribution: DistributionGroup, Payments: []Payment{{UserID: owner, AmountCents: 101}},
+	})
+	require.ErrorAs(t, err, &ValidationError{})
+	require.Zero(t, repository.createCalls)
+
+	_, err = service.CreateBooking(context.Background(), owner, planning, CreateBookingInput{
+		Title: "Entradas", Type: TypeActivity, Status: StatusConfirmed, CostCents: 100,
+		CostDistribution: DistributionIndividual, Payments: []Payment{{UserID: owner, AmountCents: 200}},
+	})
+	require.NoError(t, err)
 }
 
 func (r *fakeRepository) CreateBooking(_ context.Context, actorUserID uuid.UUID, planningID uuid.UUID, input CreateBookingInput) (Booking, error) {

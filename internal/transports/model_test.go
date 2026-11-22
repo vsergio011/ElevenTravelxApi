@@ -28,7 +28,7 @@ func TestValidateInput(t *testing.T) {
 		{"arrival before departure", func(in *Input) { in.DepartureDate = &first; in.ArrivalDate = &second }, false},
 		{"selected without members", func(in *Input) { in.CostDistribution = "selected_participants" }, false},
 		{"duplicate members", func(in *Input) { in.ParticipantUserIDs = []uuid.UUID{user, user} }, false},
-		{"payment exceeds cost", func(in *Input) { in.CostCents = 100; in.Payments = &[]Payment{{UserID: user, AmountCents: 101}} }, false},
+		{"zero payment", func(in *Input) { in.CostCents = 100; in.Payments = &[]Payment{{UserID: user}} }, false},
 		{"valid partial payment", func(in *Input) { in.CostCents = 100; in.Payments = &[]Payment{{UserID: user, AmountCents: 50}} }, true},
 	}
 	for _, tt := range tests {
@@ -124,5 +124,25 @@ func TestEditPermissionsAndPaymentPreservation(t *testing.T) {
 	}
 	if repo.item.Status != "draft" {
 		t.Fatal("return to draft failed")
+	}
+}
+
+func TestServiceRejectsPaymentsAboveEconomicTotal(t *testing.T) {
+	owner, member := uuid.New(), uuid.New()
+	planning := uuid.New()
+	input := testInput()
+	input.CostCents = 100
+	input.CostDistribution = "individual"
+	input.Payments = &[]Payment{{UserID: owner, AmountCents: 201}}
+	service := NewService(&fakeRepository{}, fakeMembership{members: map[uuid.UUID]plannings.PlanningMember{
+		owner:  {UserID: owner, Role: plannings.RoleOwner},
+		member: {UserID: member, Role: plannings.RoleMember},
+	}})
+	if _, err := service.Create(context.Background(), owner, planning, input); !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected economic overpayment validation, got %v", err)
+	}
+	input.Payments = &[]Payment{{UserID: owner, AmountCents: 200}}
+	if _, err := service.Create(context.Background(), owner, planning, input); err != nil {
+		t.Fatalf("expected payment matching individual total, got %v", err)
 	}
 }

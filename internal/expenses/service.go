@@ -139,6 +139,7 @@ func budgetItemFromExpense(expense Expense, memberIDs []uuid.UUID) BudgetItem {
 	for _, payment := range expense.Payments {
 		payers = append(payers, Share{UserID: payment.UserID, Cents: payment.AmountCents})
 	}
+	economicTotal := expenseledger.EconomicTotal(expense.Distribution, expense.AmountCents, len(shares))
 	sourceID := expense.ID
 	if expense.ItemRefID != nil {
 		sourceID = *expense.ItemRefID
@@ -146,9 +147,9 @@ func budgetItemFromExpense(expense Expense, memberIDs []uuid.UUID) BudgetItem {
 	return BudgetItem{
 		ID: "expense:" + expense.ID.String(), Source: source, SourceID: sourceID,
 		Title: expense.Title, Subtitle: expense.Category, Status: status,
-		AmountCents: expense.AmountCents, Currency: expense.Currency, Distribution: expense.Distribution,
+		AmountCents: economicTotal, Currency: expense.Currency, Distribution: expense.Distribution,
 		Payers: payers, Shares: shares,
-		PaymentStatus: expenseledger.PaymentStatus(expense.AmountCents, expense.Payments),
+		PaymentStatus: expenseledger.PaymentStatus(economicTotal, expense.Payments),
 		Date:          expense.SpentAt,
 	}
 }
@@ -288,7 +289,6 @@ func (s *Service) validateEconomics(ctx context.Context, planningID uuid.UUID, a
 			return invalid("shares", "shares must add up to amount_cents")
 		}
 	}
-	var paid int64
 	for _, payment := range payments {
 		if _, ok := allowed[payment.UserID]; !ok {
 			return invalid("payments", "all payers must be planning members")
@@ -296,10 +296,13 @@ func (s *Service) validateEconomics(ctx context.Context, planningID uuid.UUID, a
 		if payment.AmountCents <= 0 {
 			return invalid("payments", "payment amounts must be positive")
 		}
-		paid += payment.AmountCents
 	}
-	if paid > amount {
-		return invalid("payments", "payments cannot exceed amount_cents")
+	participantCount := len(memberIDs)
+	if distribution != DistributionIndividual {
+		participantCount = len(participants)
+	}
+	if err := expenseledger.ValidatePayments(expenseledger.EconomicTotal(distribution, amount, participantCount), payments); err != nil {
+		return invalid("payments", "payments cannot exceed the distributed total")
 	}
 	return nil
 }

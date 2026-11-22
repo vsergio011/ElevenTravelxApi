@@ -9,10 +9,10 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 )
 
 const (
@@ -26,6 +26,9 @@ const (
 
 // ErrInvalidShares means the explicit shares do not add up to the expense amount.
 var ErrInvalidShares = errors.New("shares must add up to the expense amount")
+
+// ErrPaymentsExceedTotal means recorded payments exceed the economic total of an item.
+var ErrPaymentsExceedTotal = errors.New("payments exceed the expense total")
 
 type Querier interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
@@ -114,6 +117,32 @@ func PaymentStatus(amountCents int64, payments []Payment) string {
 	default:
 		return "paid"
 	}
+}
+
+// EconomicTotal returns the amount that must actually be paid. For individual
+// distribution the stored amount is the price per planning member; other modes
+// store the full item total.
+func EconomicTotal(distribution string, amountCents int64, participantCount int) int64 {
+	if distribution == DistributionIndividual && participantCount > 0 {
+		return amountCents * int64(participantCount)
+	}
+	return amountCents
+}
+
+// ValidatePayments checks that the recorded payments cover no more than the
+// economic total while still allowing partial or no payment.
+func ValidatePayments(totalCents int64, payments []Payment) error {
+	var paid int64
+	for _, payment := range payments {
+		if payment.AmountCents <= 0 {
+			return ErrPaymentsExceedTotal
+		}
+		paid += payment.AmountCents
+	}
+	if paid > totalCents {
+		return ErrPaymentsExceedTotal
+	}
+	return nil
 }
 
 // WriteInput describes the full economic state of one expense.
@@ -362,14 +391,28 @@ func SyncItemExpense(ctx context.Context, q Querier, in ItemSync) error {
 		Distribution: distribution, ParticipantUserIDs: in.ParticipantUserIDs,
 	}
 
+	members, err := planningMembers(ctx, q, in.PlanningID)
+	if err != nil {
+		return err
+	}
+	shares := ComputeShares(distribution, amount, members, in.ParticipantUserIDs, nil)
+	finalPayments := append([]Payment(nil), current.Payments...)
+	switch {
+	case in.Payments != nil:
+		finalPayments = append([]Payment(nil), (*in.Payments)...)
+	case !exists && in.DefaultPayerUserID != nil:
+		finalPayments = []Payment{{UserID: *in.DefaultPayerUserID, AmountCents: amount, PaidAt: time.Now().UTC()}}
+	case exists && len(finalPayments) == 0 && in.DefaultPayerUserID != nil:
+		finalPayments = []Payment{{UserID: *in.DefaultPayerUserID, AmountCents: amount, PaidAt: time.Now().UTC()}}
+	case exists && in.FollowAmount && len(finalPayments) == 1 && finalPayments[0].AmountCents != amount:
+		finalPayments[0].AmountCents = amount
+	}
+	if err := ValidatePayments(EconomicTotal(distribution, amount, len(shares)), finalPayments); err != nil {
+		return err
+	}
+
 	if !exists {
-		payments := []Payment{}
-		if in.Payments != nil {
-			payments = *in.Payments
-		} else if in.DefaultPayerUserID != nil {
-			payments = []Payment{{UserID: *in.DefaultPayerUserID, AmountCents: amount, PaidAt: time.Now().UTC()}}
-		}
-		write.Payments = payments
+		write.Payments = finalPayments
 		_, err = Insert(ctx, q, write)
 		return err
 	}
@@ -379,13 +422,11 @@ func SyncItemExpense(ctx context.Context, q Querier, in ItemSync) error {
 	}
 	switch {
 	case in.Payments != nil:
-		return ReplacePayments(ctx, q, current.ExpenseID, *in.Payments)
+		return ReplacePayments(ctx, q, current.ExpenseID, finalPayments)
 	case len(current.Payments) == 0 && in.DefaultPayerUserID != nil:
-		return ReplacePayments(ctx, q, current.ExpenseID, []Payment{{UserID: *in.DefaultPayerUserID, AmountCents: amount, PaidAt: time.Now().UTC()}})
+		return ReplacePayments(ctx, q, current.ExpenseID, finalPayments)
 	case in.FollowAmount && len(current.Payments) == 1 && current.Payments[0].AmountCents != amount:
-		only := current.Payments[0]
-		only.AmountCents = amount
-		return ReplacePayments(ctx, q, current.ExpenseID, []Payment{only})
+		return ReplacePayments(ctx, q, current.ExpenseID, finalPayments)
 	}
 	return nil
 }
