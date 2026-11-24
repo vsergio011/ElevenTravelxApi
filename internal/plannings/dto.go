@@ -100,6 +100,7 @@ type PlanningResponse struct {
 	EndsAt          *time.Time `json:"ends_at"`
 	Status          string     `json:"status"`
 	CoverImageURL   *string    `json:"cover_image_url"`
+	MembersCount    int        `json:"members_count"`
 	IsArchived      bool       `json:"is_archived"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
@@ -231,6 +232,7 @@ func NewPlanningResponse(planning Planning) PlanningResponse {
 		EndsAt:          planning.EndsAt,
 		Status:          planning.Status,
 		CoverImageURL:   planning.CoverImageURL,
+		MembersCount:    planning.MembersCount,
 		IsArchived:      planning.IsArchived,
 		CreatedAt:       planning.CreatedAt,
 		UpdatedAt:       planning.UpdatedAt,

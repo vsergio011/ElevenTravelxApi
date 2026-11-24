@@ -30,6 +30,7 @@ type Planning struct {
 	EndsAt          *time.Time
 	Status          string
 	CoverImageURL   *string
+	MembersCount    int
 	IsArchived      bool
 	CreatedAt       time.Time
 	UpdatedAt       time.Time

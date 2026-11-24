@@ -395,7 +395,9 @@ func (r *PostgresRepository) ListPlannings(ctx context.Context, filters Planning
 		WHERE pm.user_id = $1 OR p.owner_user_id = $1
 	`
 	listQuery := `
-		SELECT p.id, p.group_id::text, p.owner_user_id, p.name, p.description, p.destination_name, p.starts_at, p.ends_at, p.status, p.cover_image_url, p.is_archived, p.created_at, p.updated_at
+		SELECT p.id, p.group_id::text, p.owner_user_id, p.name, p.description, p.destination_name, p.starts_at, p.ends_at, p.status, p.cover_image_url,
+			(SELECT count(*)::int FROM public.planning_members pm_count WHERE pm_count.planning_id = p.id),
+			p.is_archived, p.created_at, p.updated_at
 		FROM public.plannings p
 		LEFT JOIN public.planning_members pm ON pm.planning_id = p.id AND pm.user_id = $1
 		WHERE pm.user_id = $1 OR p.owner_user_id = $1
@@ -443,7 +445,7 @@ func (r *PostgresRepository) ListPlannings(ctx context.Context, filters Planning
 
 	plannings := make([]Planning, 0)
 	for rows.Next() {
-		planning, scanErr := scanPlanning(rows)
+		planning, scanErr := scanPlanningWithMemberCount(rows)
 		if scanErr != nil {
 			return PageResult[Planning]{}, fmt.Errorf("list plannings scan: %w", scanErr)
 		}
@@ -1461,6 +1463,39 @@ func scanPlanning(scanner planningScanner) (Planning, error) {
 		&planning.EndsAt,
 		&planning.Status,
 		&planning.CoverImageURL,
+		&planning.IsArchived,
+		&planning.CreatedAt,
+		&planning.UpdatedAt,
+	)
+	if err != nil {
+		return Planning{}, err
+	}
+
+	if groupID != nil {
+		parsedGroupID, parseErr := uuid.Parse(*groupID)
+		if parseErr == nil {
+			planning.GroupID = &parsedGroupID
+		}
+	}
+
+	return planning, nil
+}
+
+func scanPlanningWithMemberCount(scanner planningScanner) (Planning, error) {
+	planning := Planning{}
+	var groupID *string
+	err := scanner.Scan(
+		&planning.ID,
+		&groupID,
+		&planning.OwnerUserID,
+		&planning.Name,
+		&planning.Description,
+		&planning.DestinationName,
+		&planning.StartsAt,
+		&planning.EndsAt,
+		&planning.Status,
+		&planning.CoverImageURL,
+		&planning.MembersCount,
 		&planning.IsArchived,
 		&planning.CreatedAt,
 		&planning.UpdatedAt,
