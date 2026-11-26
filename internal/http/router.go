@@ -12,6 +12,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/flights"
 	"github.com/eleventravel/eleventravel-api/internal/http/middleware"
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
+	"github.com/eleventravel/eleventravel-api/internal/notifications"
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
 	"github.com/eleventravel/eleventravel-api/internal/platform/auth/supabasejwt"
 	"github.com/eleventravel/eleventravel-api/internal/storage"
@@ -19,7 +20,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/users"
 )
 
-func NewRouter(tokenValidator supabasejwt.TokenValidator, authHandler *auth.Handler, planningHandler *plannings.Handler, userHandler *users.Handler, bookingHandler *bookings.Handler, flightHandler *flights.Handler, checklistHandler *checklists.Handler, expenseHandler *expenses.Handler, storageHandler *storage.Handler, transportHandler *transports.Handler, allowedOrigins []string) stdhttp.Handler {
+func NewRouter(tokenValidator supabasejwt.TokenValidator, authHandler *auth.Handler, planningHandler *plannings.Handler, userHandler *users.Handler, notificationHandler *notifications.Handler, bookingHandler *bookings.Handler, flightHandler *flights.Handler, checklistHandler *checklists.Handler, expenseHandler *expenses.Handler, storageHandler *storage.Handler, transportHandler *transports.Handler, allowedOrigins []string) stdhttp.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(middleware.Logging)
@@ -36,6 +37,7 @@ func NewRouter(tokenValidator supabasejwt.TokenValidator, authHandler *auth.Hand
 			protected.Use(middleware.Authenticate(tokenValidator))
 			planningHandler.RegisterRoutes(protected)
 			userHandler.RegisterRoutes(protected)
+			notificationHandler.RegisterRoutes(protected)
 			bookingHandler.RegisterRoutes(protected)
 			flightHandler.RegisterRoutes(protected)
 			checklistHandler.RegisterRoutes(protected)

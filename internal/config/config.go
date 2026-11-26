@@ -35,6 +35,10 @@ type Config struct {
 	RegistrationEnabled            bool
 	RegistrationAccessCodeRequired bool
 	RegistrationAccessCode         string
+
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
 }
 
 func Load() (Config, error) {
@@ -79,6 +83,9 @@ func Load() (Config, error) {
 		RegistrationEnabled:            registrationEnabled,
 		RegistrationAccessCodeRequired: registrationAccessCodeRequired,
 		RegistrationAccessCode:         strings.TrimSpace(os.Getenv("REGISTRATION_ACCESS_CODE")),
+		VAPIDPublicKey:                 strings.TrimSpace(os.Getenv("VAPID_PUBLIC_KEY")),
+		VAPIDPrivateKey:                strings.TrimSpace(os.Getenv("VAPID_PRIVATE_KEY")),
+		VAPIDSubject:                   strings.TrimSpace(os.Getenv("VAPID_SUBJECT")),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -108,6 +115,11 @@ func Load() (Config, error) {
 func (c Config) R2Configured() bool {
 	return c.R2AccessKeyID != "" && c.R2SecretAccessKey != "" && c.R2Endpoint != "" &&
 		c.R2PublicBucket != "" && c.R2PrivateBucket != "" && c.R2PublicDomain != ""
+}
+
+// WebPushConfigured reports whether VAPID credentials are present to send Web Push notifications.
+func (c Config) WebPushConfigured() bool {
+	return c.VAPIDPublicKey != "" && c.VAPIDPrivateKey != ""
 }
 
 func (c Config) HTTPAddress() string {

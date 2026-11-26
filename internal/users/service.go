@@ -15,6 +15,12 @@ import (
 type Service struct {
 	repository Repository
 	images     ImageStore
+	notifier   FollowNotifier
+}
+
+// FollowNotifier notifies a user when another user starts following them.
+type FollowNotifier interface {
+	NotifyNewFollower(ctx context.Context, actorUserID uuid.UUID, recipientUserID uuid.UUID) error
 }
 
 // ImageStore is the storage capability users needs to link uploaded images to profile media.
@@ -30,6 +36,11 @@ func NewService(repository Repository) *Service {
 
 func (s *Service) WithImageStore(images ImageStore) *Service {
 	s.images = images
+	return s
+}
+
+func (s *Service) WithFollowNotifier(notifier FollowNotifier) *Service {
+	s.notifier = notifier
 	return s
 }
 
@@ -109,7 +120,16 @@ func (s *Service) FollowUser(ctx context.Context, actorUserID uuid.UUID, targetU
 	if _, err := s.repository.EnsureProfile(ctx, targetUserID, ""); err != nil {
 		return err
 	}
-	return s.repository.Follow(ctx, actorUserID, targetUserID)
+	created, err := s.repository.Follow(ctx, actorUserID, targetUserID)
+	if err != nil {
+		return err
+	}
+	if created && s.notifier != nil {
+		if notifyErr := s.notifier.NotifyNewFollower(ctx, actorUserID, targetUserID); notifyErr != nil {
+			log.Printf("users: follow notification error: %v", notifyErr)
+		}
+	}
+	return nil
 }
 
 func (s *Service) UnfollowUser(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) error {

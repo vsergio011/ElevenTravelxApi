@@ -19,7 +19,7 @@ type Repository interface {
 	GetProfileByUsername(ctx context.Context, username string) (UserProfile, error)
 	UpdateProfile(ctx context.Context, userID uuid.UUID, input UpdateUserProfileInput) (UserProfile, error)
 	GetFollowStats(ctx context.Context, actorUserID uuid.UUID, profileUserID uuid.UUID) (UserFollowStats, error)
-	Follow(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) error
+	Follow(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) (bool, error)
 	Unfollow(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) error
 	ListFollowers(ctx context.Context, userID uuid.UUID, limit int) ([]UserSummary, error)
 	ListFollowing(ctx context.Context, userID uuid.UUID, limit int) ([]UserSummary, error)
@@ -197,21 +197,21 @@ func (r *PostgresRepository) GetFollowStats(ctx context.Context, actorUserID uui
 	return stats, nil
 }
 
-func (r *PostgresRepository) Follow(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) error {
+func (r *PostgresRepository) Follow(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) (bool, error) {
 	if actorUserID == targetUserID {
-		return ErrConflict
+		return false, ErrConflict
 	}
 
-	_, err := r.pool.Exec(ctx, `
+	command, err := r.pool.Exec(ctx, `
 		INSERT INTO public.user_follows (follower_user_id, following_user_id)
 		VALUES ($1, $2)
 		ON CONFLICT (follower_user_id, following_user_id) DO NOTHING
 	`, actorUserID, targetUserID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return command.RowsAffected() > 0, nil
 }
 
 func (r *PostgresRepository) Unfollow(ctx context.Context, actorUserID uuid.UUID, targetUserID uuid.UUID) error {

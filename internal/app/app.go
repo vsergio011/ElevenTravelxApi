@@ -13,6 +13,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/expenses"
 	"github.com/eleventravel/eleventravel-api/internal/flights"
 	apihttp "github.com/eleventravel/eleventravel-api/internal/http"
+	"github.com/eleventravel/eleventravel-api/internal/notifications"
 	"github.com/eleventravel/eleventravel-api/internal/plannings"
 	"github.com/eleventravel/eleventravel-api/internal/platform/auth/supabaseadmin"
 	"github.com/eleventravel/eleventravel-api/internal/platform/auth/supabasejwt"
@@ -45,6 +46,19 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	userRepository := users.NewPostgresRepository(pool)
 	userService := users.NewService(userRepository)
 	userHandler := users.NewHandler(userService)
+	notificationRepository := notifications.NewPostgresRepository(pool)
+	notificationService := notifications.NewService(notificationRepository)
+	if cfg.WebPushConfigured() {
+		notificationService.WithPushDispatcher(notifications.NewWebPushDispatcher(notificationRepository, notifications.WebPushSettings{
+			VAPIDPublicKey:  cfg.VAPIDPublicKey,
+			VAPIDPrivateKey: cfg.VAPIDPrivateKey,
+			Subscriber:      cfg.VAPIDSubject,
+		}))
+	} else {
+		log.Println("Web Push not configured: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable PWA push notifications")
+	}
+	notificationHandler := notifications.NewHandler(notificationService)
+	userService.WithFollowNotifier(notificationService)
 	authService := auth.NewService(
 		auth.Settings{Enabled: cfg.RegistrationEnabled, AccessCodeRequired: cfg.RegistrationAccessCodeRequired},
 		cfg.RegistrationAccessCode,
@@ -95,7 +109,7 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	}
 
 	return &Application{
-		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, storageHandler, transportHandler, cfg.CORSAllowedOrigins),
+		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, notificationHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, storageHandler, transportHandler, cfg.CORSAllowedOrigins),
 		Close: func() {
 			stopCleanup()
 			pool.Close()
