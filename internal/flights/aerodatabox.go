@@ -15,7 +15,20 @@ type FlightLookup struct {
 	FlightNumber string          `json:"flight_number"`
 	Status       string          `json:"status"`
 	Aircraft     string          `json:"aircraft,omitempty"`
+	IsEstimated  bool            `json:"is_estimated,omitempty"`
+	MatchedDate  string          `json:"matched_date,omitempty"`
 	Segments     []LookupSegment `json:"segments"`
+}
+
+func NormalizeFlightNumber(raw string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToUpper(raw) {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '-' {
+			continue
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
 }
 
 type LookupSegment struct {
@@ -57,10 +70,11 @@ func (c *AeroDataBoxClient) Lookup(ctx context.Context, flightNumber string, fli
 		return FlightLookup{}, ErrFlightLookupUnavailable
 	}
 
+	normalizedNumber := NormalizeFlightNumber(flightNumber)
 	endpoint := fmt.Sprintf(
 		"%s/flights/number/%s/%s",
 		c.baseURL,
-		url.PathEscape(strings.ToUpper(strings.TrimSpace(flightNumber))),
+		url.PathEscape(normalizedNumber),
 		flightDate.Format("2006-01-02"),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

@@ -28,6 +28,8 @@ type Booking struct {
 	Status             string
 	ExternalURL        *string
 	OccursAt           *time.Time
+	EndsAt             *time.Time
+	ReservationCode    *string
 	Location           *string
 	Notes              *string
 	CostCents          int64
@@ -77,6 +79,8 @@ type CreateBookingInput struct {
 	Status             string
 	ExternalURL        *string
 	OccursAt           *time.Time
+	EndsAt             *time.Time
+	ReservationCode    *string
 	Location           *string
 	Notes              *string
 	CostCents          int64
@@ -92,6 +96,10 @@ type UpdateBookingInput struct {
 	Status             *string
 	ExternalURL        *string
 	OccursAt           *time.Time
+	OccursAtSet        bool
+	EndsAt             *time.Time
+	EndsAtSet          bool
+	ReservationCode    *string
 	Location           *string
 	Notes              *string
 	CostCents          *int64

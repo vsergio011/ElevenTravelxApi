@@ -13,6 +13,8 @@ type CreateBookingRequest struct {
 	Status             *string          `json:"status"`
 	ExternalURL        *string          `json:"external_url"`
 	OccursAt           *string          `json:"occurs_at"`
+	EndsAt             *string          `json:"ends_at"`
+	ReservationCode    *string          `json:"reservation_code"`
 	Location           *string          `json:"location"`
 	Notes              *string          `json:"notes"`
 	CostCents          *int64           `json:"cost_cents"`
@@ -28,6 +30,8 @@ type UpdateBookingRequest struct {
 	Status             *string           `json:"status"`
 	ExternalURL        *string           `json:"external_url"`
 	OccursAt           *string           `json:"occurs_at"`
+	EndsAt             *string           `json:"ends_at"`
+	ReservationCode    *string           `json:"reservation_code"`
 	Location           *string           `json:"location"`
 	Notes              *string           `json:"notes"`
 	CostCents          *int64            `json:"cost_cents"`
@@ -52,6 +56,8 @@ type BookingResponse struct {
 	Status             string            `json:"status"`
 	ExternalURL        *string           `json:"external_url"`
 	OccursAt           *time.Time        `json:"occurs_at"`
+	EndsAt             *time.Time        `json:"ends_at"`
+	ReservationCode    *string           `json:"reservation_code"`
 	Location           *string           `json:"location"`
 	Notes              *string           `json:"notes"`
 	CostCents          int64             `json:"cost_cents"`
@@ -73,6 +79,8 @@ func NewBookingResponse(booking Booking) BookingResponse {
 		Status:             booking.Status,
 		ExternalURL:        booking.ExternalURL,
 		OccursAt:           booking.OccursAt,
+		EndsAt:             booking.EndsAt,
+		ReservationCode:    booking.ReservationCode,
 		Location:           booking.Location,
 		Notes:              booking.Notes,
 		CostCents:          booking.CostCents,

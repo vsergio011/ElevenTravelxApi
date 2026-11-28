@@ -19,14 +19,21 @@ type Service struct {
 	repository Repository
 	membership PlanningMembership
 	lookup     FlightLookupProvider
+	cache      LookupCache
+	now        func() time.Time
 }
 
 func NewService(repository Repository, membership PlanningMembership, lookup ...FlightLookupProvider) *Service {
-	service := &Service{repository: repository, membership: membership}
+	service := &Service{repository: repository, membership: membership, now: time.Now}
 	if len(lookup) > 0 {
 		service.lookup = lookup[0]
 	}
 	return service
+}
+
+func (s *Service) WithLookupCache(cache LookupCache) *Service {
+	s.cache = cache
+	return s
 }
 
 func (s *Service) Create(ctx context.Context, actor, planning uuid.UUID, input CreateInput) (Flight, error) {
@@ -66,7 +73,45 @@ func (s *Service) Lookup(ctx context.Context, actor, planning uuid.UUID, flightN
 	if s.lookup == nil {
 		return FlightLookup{}, ErrFlightLookupUnavailable
 	}
-	return s.lookup.Lookup(ctx, flightNumber, flightDate)
+	normalized := NormalizeFlightNumber(flightNumber)
+	if normalized == "" {
+		return FlightLookup{}, ErrFlightLookupNotFound
+	}
+	if s.cache != nil {
+		if cached, hit, err := s.cache.Get(ctx, normalized, flightDate); err == nil && hit {
+			return cached, nil
+		}
+	}
+
+	result, err := s.lookup.Lookup(ctx, normalized, flightDate)
+	if errors.Is(err, ErrFlightLookupNotFound) {
+		nowUTC := s.now().UTC().Truncate(24 * time.Hour)
+		targetUTC := time.Date(flightDate.Year(), flightDate.Month(), flightDate.Day(), 0, 0, 0, 0, time.UTC)
+		if int(targetUTC.Sub(nowUTC).Hours()/24) > 14 {
+			offset := (int(targetUTC.Weekday()) - int(nowUTC.Weekday()) + 7) % 7
+			if offset == 0 {
+				offset = 7
+			}
+			fallbackDate := nowUTC.AddDate(0, 0, offset)
+			if fallbackResult, fbErr := s.lookup.Lookup(ctx, normalized, fallbackDate); fbErr == nil {
+				fallbackResult.IsEstimated = true
+				fallbackResult.MatchedDate = fallbackDate.Format("2006-01-02")
+				result = fallbackResult
+				err = nil
+			}
+		}
+	}
+	if err != nil {
+		return FlightLookup{}, err
+	}
+	if s.cache != nil {
+		ttl := 24 * time.Hour
+		if result.IsEstimated {
+			ttl = 12 * time.Hour
+		}
+		_ = s.cache.Set(ctx, normalized, flightDate, result, ttl)
+	}
+	return result, nil
 }
 func (s *Service) Update(ctx context.Context, actor, planning, id uuid.UUID, input UpdateInput) (Flight, error) {
 	flight, err := s.repository.Get(ctx, planning, id)

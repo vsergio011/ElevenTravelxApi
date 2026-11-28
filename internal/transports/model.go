@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ type Input struct {
 	ArrivalTime        *string     `json:"arrival_time"`
 	Operator           *string     `json:"operator"`
 	Reference          *string     `json:"reference"`
+	ExternalURL        *string     `json:"external_url"`
 	Notes              *string     `json:"notes"`
 	CostCents          int64       `json:"cost_cents"`
 	Currency           string      `json:"currency"`
@@ -174,17 +176,51 @@ func validateInput(input Input) error {
 			}
 		}
 	}
+	if _, err := normalizeExternalURL(input.ExternalURL); err != nil {
+		return err
+	}
 	return nil
+}
+
+func normalizeExternalURL(value *string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if len([]rune(trimmed)) > 500 {
+		return nil, fmt.Errorf("%w: external_url cannot exceed 500 characters", ErrValidation)
+	}
+	parsed, err := url.ParseRequestURI(trimmed)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return nil, fmt.Errorf("%w: external_url must be a valid http(s) URL", ErrValidation)
+	}
+	return &trimmed, nil
+}
+
+func normalizeInput(input Input) (Input, error) {
+	normalizedURL, err := normalizeExternalURL(input.ExternalURL)
+	if err != nil {
+		return input, err
+	}
+	input.ExternalURL = normalizedURL
+	return input, nil
 }
 
 func (s *Service) Create(ctx context.Context, actor, planning uuid.UUID, input Input) (Transport, error) {
 	if _, err := s.member(ctx, planning, actor); err != nil {
 		return Transport{}, err
 	}
-	if err := s.validate(ctx, planning, input); err != nil {
+	normalized, err := normalizeInput(input)
+	if err != nil {
 		return Transport{}, err
 	}
-	return s.repository.Create(ctx, actor, planning, input)
+	if err := s.validate(ctx, planning, normalized); err != nil {
+		return Transport{}, err
+	}
+	return s.repository.Create(ctx, actor, planning, normalized)
 }
 
 func (s *Service) Get(ctx context.Context, actor, planning, id uuid.UUID) (Transport, error) {
@@ -224,10 +260,14 @@ func (s *Service) Update(ctx context.Context, actor, planning, id uuid.UUID, inp
 	if input.Payments == nil {
 		input.Payments = current.Payments
 	}
-	if err := s.validate(ctx, planning, input); err != nil {
+	normalized, err := normalizeInput(input)
+	if err != nil {
 		return Transport{}, err
 	}
-	return s.repository.Update(ctx, planning, id, input)
+	if err := s.validate(ctx, planning, normalized); err != nil {
+		return Transport{}, err
+	}
+	return s.repository.Update(ctx, planning, id, normalized)
 }
 
 func (s *Service) Confirm(ctx context.Context, actor, planning, id uuid.UUID) (Transport, error) {

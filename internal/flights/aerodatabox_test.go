@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eleventravel/eleventravel-api/internal/plannings"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,4 +53,73 @@ func TestAeroDataBoxClientLookupRequiresPrivateKey(t *testing.T) {
 	_, err := client.Lookup(context.Background(), "IB3166", time.Now())
 
 	require.ErrorIs(t, err, ErrFlightLookupUnavailable)
+}
+
+type stubMembership struct{ member plannings.PlanningMember }
+
+func (s stubMembership) GetMember(context.Context, uuid.UUID, uuid.UUID) (plannings.PlanningMember, error) {
+	return s.member, nil
+}
+
+type stubLookupProvider struct {
+	calls int
+	fn    func(flightNumber string, flightDate time.Time) (FlightLookup, error)
+}
+
+func (s *stubLookupProvider) Lookup(_ context.Context, flightNumber string, flightDate time.Time) (FlightLookup, error) {
+	s.calls++
+	return s.fn(flightNumber, flightDate)
+}
+
+type memoryLookupCache struct {
+	items map[string]FlightLookup
+}
+
+func (m *memoryLookupCache) Get(_ context.Context, flightNumber string, flightDate time.Time) (FlightLookup, bool, error) {
+	item, ok := m.items[flightNumber+"|"+flightDate.Format("2006-01-02")]
+	return item, ok, nil
+}
+
+func (m *memoryLookupCache) Set(_ context.Context, flightNumber string, flightDate time.Time, value FlightLookup, _ time.Duration) error {
+	m.items[flightNumber+"|"+flightDate.Format("2006-01-02")] = value
+	return nil
+}
+
+func TestNormalizeFlightNumber(t *testing.T) {
+	require.Equal(t, "IB3166", NormalizeFlightNumber(" ib 3166 "))
+	require.Equal(t, "EY800", NormalizeFlightNumber("ey-800"))
+}
+
+func TestServiceLookupUsesCacheAndFutureFallback(t *testing.T) {
+	planningID, actorID := uuid.New(), uuid.New()
+	now := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC) // Friday
+	farDate := time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC) // Friday, >14 days ahead
+
+	provider := &stubLookupProvider{
+		fn: func(flightNumber string, flightDate time.Time) (FlightLookup, error) {
+			if flightDate.Format("2006-01-02") == "2026-09-04" {
+				return FlightLookup{}, ErrFlightLookupNotFound
+			}
+			return FlightLookup{
+				Airline:      "Iberia",
+				FlightNumber: flightNumber,
+				Status:       "Scheduled",
+				Segments:     []LookupSegment{{OriginCode: "MAD", DestinationCode: "TYO"}},
+			}, nil
+		},
+	}
+	cache := &memoryLookupCache{items: map[string]FlightLookup{}}
+	service := NewService(nil, stubMembership{member: plannings.PlanningMember{PlanningID: planningID, UserID: actorID}}, provider).WithLookupCache(cache)
+	service.now = func() time.Time { return now }
+
+	first, err := service.Lookup(context.Background(), actorID, planningID, " ib 3166 ", farDate)
+	require.NoError(t, err)
+	require.True(t, first.IsEstimated)
+	require.Equal(t, "2026-05-08", first.MatchedDate)
+	require.Equal(t, 2, provider.calls)
+
+	second, err := service.Lookup(context.Background(), actorID, planningID, "IB3166", farDate)
+	require.NoError(t, err)
+	require.True(t, second.IsEstimated)
+	require.Equal(t, 2, provider.calls)
 }

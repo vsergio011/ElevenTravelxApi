@@ -119,6 +119,55 @@ func TestValidateUpdateBookingRequestTracksRouteStopFieldPresence(t *testing.T) 
 	}
 }
 
+func TestValidateBookingEndsAtAndReservationCode(t *testing.T) {
+	t.Parallel()
+
+	valid, err := validateCreateBookingRequest(CreateBookingRequest{
+		Title:           "Hotel Tokyo",
+		Type:            TypeHotel,
+		OccursAt:        stringPointer("2026-09-01T15:00:00Z"),
+		EndsAt:          stringPointer("2026-09-05T11:00:00Z"),
+		ReservationCode: stringPointer("  ABC-123  "),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if valid.EndsAt == nil || valid.ReservationCode == nil || *valid.ReservationCode != "ABC-123" {
+		t.Fatal("expected ends_at and trimmed reservation_code")
+	}
+
+	_, err = validateCreateBookingRequest(CreateBookingRequest{
+		Title:    "Hotel Tokyo",
+		Type:     TypeHotel,
+		OccursAt: stringPointer("2026-09-05T15:00:00Z"),
+		EndsAt:   stringPointer("2026-09-01T11:00:00Z"),
+	})
+	if err == nil {
+		t.Fatal("expected error when ends_at is before occurs_at")
+	}
+
+	tooLong := "01234567890123456789012345678901234567890123456789012345678901234"
+	_, err = validateCreateBookingRequest(CreateBookingRequest{
+		Title:           "Hotel Tokyo",
+		Type:            TypeHotel,
+		ReservationCode: &tooLong,
+	})
+	if err == nil {
+		t.Fatal("expected error when reservation_code exceeds 64 characters")
+	}
+
+	cleared, err := validateUpdateBookingRequest(UpdateBookingRequest{
+		OccursAt: stringPointer(""),
+		EndsAt:   stringPointer(""),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error clearing dates: %v", err)
+	}
+	if !cleared.OccursAtSet || cleared.OccursAt != nil || !cleared.EndsAtSet || cleared.EndsAt != nil {
+		t.Fatal("expected empty strings to mark dates as cleared")
+	}
+}
+
 func asValidationError(err error, target *ValidationError) bool {
 	validationErr, ok := err.(ValidationError)
 	if !ok {

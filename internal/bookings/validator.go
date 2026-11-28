@@ -48,6 +48,19 @@ func validateCreateBookingRequest(request CreateBookingRequest) (CreateBookingIn
 		details = append(details, response.ErrorDetail{Field: "occurs_at", Message: occursErr.Error()})
 	}
 
+	endsAt, endsErr := parseOptionalTimestamp(request.EndsAt)
+	if endsErr != nil {
+		details = append(details, response.ErrorDetail{Field: "ends_at", Message: endsErr.Error()})
+	}
+	if occursAt != nil && endsAt != nil && endsAt.Before(*occursAt) {
+		details = append(details, response.ErrorDetail{Field: "ends_at", Message: "ends_at must be on or after occurs_at"})
+	}
+
+	reservationCode, codeErr := validateReservationCode(request.ReservationCode, false)
+	if codeErr != nil {
+		details = append(details, response.ErrorDetail{Field: "reservation_code", Message: codeErr.Error()})
+	}
+
 	if len(details) > 0 {
 		return CreateBookingInput{}, ValidationError{Details: details}
 	}
@@ -89,14 +102,16 @@ func validateCreateBookingRequest(request CreateBookingRequest) (CreateBookingIn
 	}
 
 	return CreateBookingInput{
-		Title:       title,
-		Type:        bookingType,
-		Status:      status,
-		ExternalURL: externalURL,
-		OccursAt:    occursAt,
-		Location:    trimOptionalString(request.Location),
-		Notes:       trimOptionalString(request.Notes),
-		CostCents:   costCents, CostDistribution: distribution, ParticipantUserIDs: request.ParticipantUserIDs, RouteStopID: request.RouteStopID, Payments: payments,
+		Title:           title,
+		Type:            bookingType,
+		Status:          status,
+		ExternalURL:     externalURL,
+		OccursAt:        occursAt,
+		EndsAt:          endsAt,
+		ReservationCode: reservationCode,
+		Location:        trimOptionalString(request.Location),
+		Notes:           trimOptionalString(request.Notes),
+		CostCents:       costCents, CostDistribution: distribution, ParticipantUserIDs: request.ParticipantUserIDs, RouteStopID: request.RouteStopID, Payments: payments,
 	}, nil
 }
 
@@ -142,6 +157,19 @@ func validateUpdateBookingRequest(request UpdateBookingRequest) (UpdateBookingIn
 		details = append(details, response.ErrorDetail{Field: "occurs_at", Message: occursErr.Error()})
 	}
 
+	endsAt, endsErr := parseOptionalTimestamp(request.EndsAt)
+	if endsErr != nil {
+		details = append(details, response.ErrorDetail{Field: "ends_at", Message: endsErr.Error()})
+	}
+	if occursAt != nil && endsAt != nil && endsAt.Before(*occursAt) {
+		details = append(details, response.ErrorDetail{Field: "ends_at", Message: "ends_at must be on or after occurs_at"})
+	}
+
+	reservationCode, codeErr := validateReservationCode(request.ReservationCode, true)
+	if codeErr != nil {
+		details = append(details, response.ErrorDetail{Field: "reservation_code", Message: codeErr.Error()})
+	}
+
 	if len(details) > 0 {
 		return UpdateBookingInput{}, ValidationError{Details: details}
 	}
@@ -182,14 +210,18 @@ func validateUpdateBookingRequest(request UpdateBookingRequest) (UpdateBookingIn
 	}
 
 	return UpdateBookingInput{
-		Title:       title,
-		Type:        bookingType,
-		Status:      status,
-		ExternalURL: externalURL,
-		OccursAt:    occursAt,
-		Location:    trimOptionalString(request.Location),
-		Notes:       trimOptionalString(request.Notes),
-		CostCents:   request.CostCents, CostDistribution: request.CostDistribution, ParticipantUserIDs: request.ParticipantUserIDs, RouteStopID: routeStopID, RouteStopIDSet: routeStopIDSet, Payments: payments,
+		Title:           title,
+		Type:            bookingType,
+		Status:          status,
+		ExternalURL:     externalURL,
+		OccursAt:        occursAt,
+		OccursAtSet:     request.OccursAt != nil,
+		EndsAt:          endsAt,
+		EndsAtSet:       request.EndsAt != nil,
+		ReservationCode: reservationCode,
+		Location:        trimOptionalString(request.Location),
+		Notes:           trimOptionalString(request.Notes),
+		CostCents:       request.CostCents, CostDistribution: request.CostDistribution, ParticipantUserIDs: request.ParticipantUserIDs, RouteStopID: routeStopID, RouteStopIDSet: routeStopIDSet, Payments: payments,
 	}, nil
 }
 
@@ -263,6 +295,23 @@ func parseOptionalTimestamp(value *string) (*time.Time, error) {
 	}
 
 	return &parsedTime, nil
+}
+
+func validateReservationCode(value *string, keepEmpty bool) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		if keepEmpty {
+			return &trimmed, nil
+		}
+		return nil, nil
+	}
+	if len([]rune(trimmed)) > 64 {
+		return nil, fmt.Errorf("reservation_code cannot exceed 64 characters")
+	}
+	return &trimmed, nil
 }
 
 func trimOptionalString(value *string) *string {

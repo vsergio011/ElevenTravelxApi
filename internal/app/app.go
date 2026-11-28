@@ -20,6 +20,7 @@ import (
 	"github.com/eleventravel/eleventravel-api/internal/platform/db"
 	"github.com/eleventravel/eleventravel-api/internal/storage"
 	"github.com/eleventravel/eleventravel-api/internal/transports"
+	"github.com/eleventravel/eleventravel-api/internal/urlpreview"
 	"github.com/eleventravel/eleventravel-api/internal/users"
 )
 
@@ -69,10 +70,11 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	bookingRepository := bookings.NewPostgresRepository(pool)
 	flightRepository := flights.NewPostgresRepository(pool)
 	flightLookup := flights.NewAeroDataBoxClient(cfg.AeroDataBoxAPIKey, cfg.AeroDataBoxHost)
-	flightService := flights.NewService(flightRepository, planningRepository, flightLookup)
+	flightService := flights.NewService(flightRepository, planningRepository, flightLookup).WithLookupCache(flights.NewPostgresLookupCache(pool))
 	bookingService := bookings.NewService(bookingRepository, planningRepository)
 	bookingHandler := bookings.NewHandler(bookingService)
 	flightHandler := flights.NewHandler(flightService)
+	urlPreviewHandler := urlpreview.NewHandler(urlpreview.NewService(planningRepository))
 	checklistRepository := checklists.NewPostgresRepository(pool)
 	checklistService := checklists.NewService(checklistRepository, planningRepository)
 	checklistHandler := checklists.NewHandler(checklistService)
@@ -109,7 +111,7 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	}
 
 	return &Application{
-		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, notificationHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, storageHandler, transportHandler, cfg.CORSAllowedOrigins),
+		Handler: apihttp.NewRouter(tokenValidator, authHandler, planningHandler, userHandler, notificationHandler, bookingHandler, flightHandler, checklistHandler, expenseHandler, storageHandler, transportHandler, urlPreviewHandler, cfg.CORSAllowedOrigins),
 		Close: func() {
 			stopCleanup()
 			pool.Close()

@@ -19,13 +19,13 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 const columns = `id, planning_id, created_by_user_id, planning_item_id, status, transport_type, origin, destination,
 	departure_date::text, to_char(departure_time, 'HH24:MI'), arrival_date::text, to_char(arrival_time, 'HH24:MI'),
-	operator, reference, notes, currency, cost_distribution, created_at, updated_at`
+	operator, reference, external_url, notes, currency, cost_distribution, created_at, updated_at`
 
 func scan(row pgx.Row) (Transport, error) {
 	var item Transport
 	err := row.Scan(&item.ID, &item.PlanningID, &item.CreatedByUserID, &item.PlanningItemID,
 		&item.Status, &item.Type, &item.Origin, &item.Destination, &item.DepartureDate, &item.DepartureTime,
-		&item.ArrivalDate, &item.ArrivalTime, &item.Operator, &item.Reference, &item.Notes,
+		&item.ArrivalDate, &item.ArrivalTime, &item.Operator, &item.Reference, &item.ExternalURL, &item.Notes,
 		&item.Currency, &item.CostDistribution, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrNotFound
@@ -114,9 +114,9 @@ func (r *PostgresRepository) Create(ctx context.Context, actor, planning uuid.UU
 	}
 	defer tx.Rollback(ctx)
 	item, err := scan(tx.QueryRow(ctx, `INSERT INTO public.transports
-		(planning_id, created_by_user_id, status, transport_type, origin, destination, departure_date, departure_time, arrival_date, arrival_time, operator, reference, notes, currency, cost_distribution)
-		VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8::time,$9::date,$10::time,$11,$12,$13,$14,$15) RETURNING `+columns,
-		planning, actor, input.Status, input.Type, input.Origin, input.Destination, input.DepartureDate, input.DepartureTime, input.ArrivalDate, input.ArrivalTime, input.Operator, input.Reference, input.Notes, input.Currency, input.CostDistribution))
+		(planning_id, created_by_user_id, status, transport_type, origin, destination, departure_date, departure_time, arrival_date, arrival_time, operator, reference, external_url, notes, currency, cost_distribution)
+		VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8::time,$9::date,$10::time,$11,$12,$13,$14,$15,$16) RETURNING `+columns,
+		planning, actor, input.Status, input.Type, input.Origin, input.Destination, input.DepartureDate, input.DepartureTime, input.ArrivalDate, input.ArrivalTime, input.Operator, input.Reference, input.ExternalURL, input.Notes, input.Currency, input.CostDistribution))
 	if err != nil {
 		return Transport{}, err
 	}
@@ -141,9 +141,9 @@ func (r *PostgresRepository) Update(ctx context.Context, planning, id uuid.UUID,
 	defer tx.Rollback(ctx)
 	item, err := scan(tx.QueryRow(ctx, `UPDATE public.transports SET
 		status=$3, transport_type=$4, origin=$5, destination=$6, departure_date=$7::date, departure_time=$8::time,
-		arrival_date=$9::date, arrival_time=$10::time, operator=$11, reference=$12, notes=$13, currency=$14, cost_distribution=$15
+		arrival_date=$9::date, arrival_time=$10::time, operator=$11, reference=$12, external_url=$13, notes=$14, currency=$15, cost_distribution=$16
 		WHERE planning_id=$1 AND id=$2 RETURNING `+columns,
-		planning, id, input.Status, input.Type, input.Origin, input.Destination, input.DepartureDate, input.DepartureTime, input.ArrivalDate, input.ArrivalTime, input.Operator, input.Reference, input.Notes, input.Currency, input.CostDistribution))
+		planning, id, input.Status, input.Type, input.Origin, input.Destination, input.DepartureDate, input.DepartureTime, input.ArrivalDate, input.ArrivalTime, input.Operator, input.Reference, input.ExternalURL, input.Notes, input.Currency, input.CostDistribution))
 	if err != nil {
 		return Transport{}, err
 	}

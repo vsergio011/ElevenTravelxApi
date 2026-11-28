@@ -30,6 +30,10 @@ func TestValidateInput(t *testing.T) {
 		{"duplicate members", func(in *Input) { in.ParticipantUserIDs = []uuid.UUID{user, user} }, false},
 		{"zero payment", func(in *Input) { in.CostCents = 100; in.Payments = &[]Payment{{UserID: user}} }, false},
 		{"valid partial payment", func(in *Input) { in.CostCents = 100; in.Payments = &[]Payment{{UserID: user, AmountCents: 50}} }, true},
+		{"valid external url", func(in *Input) { u := "https://www.renfe.com/es/es"; in.ExternalURL = &u }, true},
+		{"empty external url", func(in *Input) { u := "   "; in.ExternalURL = &u }, true},
+		{"invalid external url scheme", func(in *Input) { u := "javascript:alert(1)"; in.ExternalURL = &u }, false},
+		{"invalid external url text", func(in *Input) { u := "not a url"; in.ExternalURL = &u }, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

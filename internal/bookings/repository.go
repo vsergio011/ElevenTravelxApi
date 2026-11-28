@@ -32,7 +32,7 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 // Cost, distribution and payments are not stored on bookings: they live in the expense linked
 // through planning_item_id and are overlaid on read (see applyCosts).
-const bookingColumns = `id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, route_stop_id, planning_item_id, created_at, updated_at`
+const bookingColumns = `id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, ends_at, reservation_code, location, notes, route_stop_id, planning_item_id, created_at, updated_at`
 
 type queryer = expenseledger.Querier
 
@@ -45,11 +45,11 @@ func (r *PostgresRepository) CreateBooking(ctx context.Context, actorUserID uuid
 
 	booking, err := scanBooking(tx.QueryRow(ctx, `
 		INSERT INTO public.bookings (
-			id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, location, notes, route_stop_id
+			id, planning_id, created_by_user_id, title, type, status, external_url, occurs_at, ends_at, reservation_code, location, notes, route_stop_id
 		)
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT id FROM public.planning_route_stops WHERE id = $10 AND planning_id = $1))
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, (SELECT id FROM public.planning_route_stops WHERE id = $12 AND planning_id = $1))
 		RETURNING `+bookingColumns,
-		planningID, actorUserID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.Location, input.Notes, input.RouteStopID))
+		planningID, actorUserID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.EndsAt, input.ReservationCode, input.Location, input.Notes, input.RouteStopID))
 	if err != nil {
 		return Booking{}, err
 	}
@@ -220,18 +220,20 @@ func (r *PostgresRepository) UpdateBooking(ctx context.Context, planningID uuid.
 			title = COALESCE($3, title),
 			type = COALESCE($4, type),
 			status = COALESCE($5, status),
-			external_url = COALESCE($6, external_url),
-			occurs_at = COALESCE($7, occurs_at),
-			location = COALESCE($8, location),
-			notes = COALESCE($9, notes),
+			external_url = CASE WHEN $6::text IS NULL THEN external_url WHEN $6::text = '' THEN NULL ELSE $6::text END,
+			occurs_at = CASE WHEN $7::boolean THEN $8 ELSE occurs_at END,
+			ends_at = CASE WHEN $9::boolean THEN $10 ELSE ends_at END,
+			reservation_code = CASE WHEN $11::text IS NULL THEN reservation_code WHEN $11::text = '' THEN NULL ELSE $11::text END,
+			location = CASE WHEN $12::text IS NULL THEN location WHEN $12::text = '' THEN NULL ELSE $12::text END,
+			notes = CASE WHEN $13::text IS NULL THEN notes WHEN $13::text = '' THEN NULL ELSE $13::text END,
 			updated_at = now(),
 			route_stop_id = CASE
-				WHEN $10::boolean THEN CASE WHEN $11::uuid IS NULL THEN NULL ELSE (SELECT id FROM public.planning_route_stops WHERE id = $11::uuid AND planning_id = $2) END
+				WHEN $14::boolean THEN CASE WHEN $15::uuid IS NULL THEN NULL ELSE (SELECT id FROM public.planning_route_stops WHERE id = $15::uuid AND planning_id = $2) END
 				ELSE route_stop_id
 			END
 		WHERE id = $1 AND planning_id = $2
 		RETURNING `+bookingColumns,
-		bookingID, planningID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAt, input.Location, input.Notes, input.RouteStopIDSet, input.RouteStopID))
+		bookingID, planningID, input.Title, input.Type, input.Status, input.ExternalURL, input.OccursAtSet, input.OccursAt, input.EndsAtSet, input.EndsAt, input.ReservationCode, input.Location, input.Notes, input.RouteStopIDSet, input.RouteStopID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Booking{}, ErrBookingNotFound
@@ -298,6 +300,8 @@ func scanBooking(scanner bookingScanner) (Booking, error) {
 		&booking.Status,
 		&booking.ExternalURL,
 		&booking.OccursAt,
+		&booking.EndsAt,
+		&booking.ReservationCode,
 		&booking.Location,
 		&booking.Notes,
 		&booking.RouteStopID,

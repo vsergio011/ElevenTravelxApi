@@ -99,6 +99,19 @@ func (s *Service) UpdateBooking(ctx context.Context, actorUserID uuid.UUID, plan
 	if input.CostCents != nil {
 		mergedCost = *input.CostCents
 	}
+	mergedOccursAt := booking.OccursAt
+	if input.OccursAtSet {
+		mergedOccursAt = input.OccursAt
+	}
+	mergedEndsAt := booking.EndsAt
+	if input.EndsAtSet {
+		mergedEndsAt = input.EndsAt
+	}
+	if mergedOccursAt != nil && mergedEndsAt != nil && mergedEndsAt.Before(*mergedOccursAt) {
+		return Booking{}, ValidationError{Details: []response.ErrorDetail{{
+			Field: "ends_at", Message: "ends_at must be on or after occurs_at",
+		}}}
+	}
 	mergedDistribution := booking.CostDistribution
 	if input.CostDistribution != nil {
 		mergedDistribution = *input.CostDistribution
@@ -320,6 +333,10 @@ func isRouteStopAssociationOnly(input UpdateBookingInput) bool {
 		input.Status == nil &&
 		input.ExternalURL == nil &&
 		input.OccursAt == nil &&
+		!input.OccursAtSet &&
+		input.EndsAt == nil &&
+		!input.EndsAtSet &&
+		input.ReservationCode == nil &&
 		input.Location == nil &&
 		input.Notes == nil &&
 		input.CostCents == nil &&
