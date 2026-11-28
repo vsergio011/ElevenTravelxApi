@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -126,6 +127,8 @@ func budgetItemFromExpense(expense Expense, memberIDs []uuid.UUID) BudgetItem {
 	source := SourceExpense
 	if expense.ItemType != nil {
 		source = *expense.ItemType
+	} else if expense.PlanningItemID == nil && expense.Category != nil && strings.EqualFold(strings.TrimSpace(*expense.Category), "settlement") {
+		source = SourceSettlement
 	}
 	status := ItemConfirmed
 	if expense.ItemStatus != nil && *expense.ItemStatus != "confirmed" {
@@ -157,13 +160,38 @@ func budgetItemFromExpense(expense Expense, memberIDs []uuid.UUID) BudgetItem {
 func buildBudget(items []BudgetItem, memberIDs []uuid.UUID) Budget {
 	paid := map[uuid.UUID]int64{}
 	owed := map[uuid.UUID]int64{}
+	unpaid := map[uuid.UUID]int64{}
 	balance := map[uuid.UUID]int64{}
+	orderedMembers := make([]uuid.UUID, 0, len(memberIDs))
+	seenMembers := make(map[uuid.UUID]struct{}, len(memberIDs))
+	ensureMember := func(id uuid.UUID) {
+		if _, ok := seenMembers[id]; !ok {
+			seenMembers[id] = struct{}{}
+			orderedMembers = append(orderedMembers, id)
+			balance[id] = 0
+		}
+	}
 	for _, id := range memberIDs {
-		balance[id] = 0
+		ensureMember(id)
 	}
 	totals := BudgetTotals{}
 
 	for _, item := range items {
+		if item.Source == SourceSettlement {
+			if item.Status != ItemConfirmed {
+				continue
+			}
+			for _, payer := range item.Payers {
+				ensureMember(payer.UserID)
+				balance[payer.UserID] += payer.Cents
+			}
+			for _, share := range item.Shares {
+				ensureMember(share.UserID)
+				balance[share.UserID] -= share.Cents
+			}
+			continue
+		}
+
 		totals.TotalCents += item.AmountCents
 		switch item.Source {
 		case SourceExpense:
@@ -184,27 +212,37 @@ func buildBudget(items []BudgetItem, memberIDs []uuid.UUID) Budget {
 			continue
 		}
 		totals.ConfirmedCents += item.AmountCents
-		for _, share := range item.Shares {
-			owed[share.UserID] += share.Cents
-		}
+		var totalPaid int64
 		for _, payer := range item.Payers {
+			ensureMember(payer.UserID)
 			paid[payer.UserID] += payer.Cents
+			totalPaid += payer.Cents
 		}
-		// Items without recorded payers cannot be settled, so they stay out of balances.
-		if len(item.Payers) == 0 {
-			continue
+		paidShares := expenseledger.AllocatePaidShares(item.Shares, totalPaid)
+		paidByShareUser := make(map[uuid.UUID]int64, len(paidShares))
+		for _, ps := range paidShares {
+			paidByShareUser[ps.UserID] += ps.Cents
+		}
+		for _, share := range item.Shares {
+			ensureMember(share.UserID)
+			owed[share.UserID] += share.Cents
+			covered := paidByShareUser[share.UserID]
+			if share.Cents > covered {
+				unpaid[share.UserID] += share.Cents - covered
+			}
+			balance[share.UserID] -= covered
 		}
 		for _, payer := range item.Payers {
 			balance[payer.UserID] += payer.Cents
 		}
-		for _, share := range item.Shares {
-			balance[share.UserID] -= share.Cents
-		}
 	}
 
-	members := make([]MemberBalance, 0, len(memberIDs))
-	for _, id := range memberIDs {
-		members = append(members, MemberBalance{UserID: id, PaidCents: paid[id], OwedCents: owed[id], BalanceCents: balance[id]})
+	members := make([]MemberBalance, 0, len(orderedMembers))
+	for _, id := range orderedMembers {
+		members = append(members, MemberBalance{
+			UserID: id, PaidCents: paid[id], OwedCents: owed[id],
+			UnpaidCents: unpaid[id], BalanceCents: balance[id],
+		})
 	}
 	return Budget{
 		Currency:    budgetCurrency,

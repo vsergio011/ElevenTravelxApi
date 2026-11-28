@@ -283,3 +283,53 @@ func TestMemberCannotEditOrDeleteAnotherMembersExpense(t *testing.T) {
 	require.ErrorIs(t, err, ErrForbidden)
 	require.ErrorIs(t, service.DeleteExpense(context.Background(), member, planning, expense.ID), ErrForbidden)
 }
+
+func TestBuildBudgetPartialPaymentPreservesZeroSumBalance(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	expense := Expense{
+		ID: uuid.New(), AmountCents: 10000, Distribution: DistributionGroup,
+		Payments: []Payment{{UserID: a, AmountCents: 2000}}, SpentAt: time.Now(),
+	}
+	budget := buildBudget([]BudgetItem{budgetItemFromExpense(expense, []uuid.UUID{a, b})}, []uuid.UUID{a, b})
+	byUser := map[uuid.UUID]MemberBalance{}
+	var sumBalance int64
+	for _, m := range budget.Members {
+		byUser[m.UserID] = m
+		sumBalance += m.BalanceCents
+	}
+	require.Equal(t, int64(0), sumBalance)
+	require.Equal(t, int64(1000), byUser[a].BalanceCents)
+	require.Equal(t, int64(-1000), byUser[b].BalanceCents)
+	require.Equal(t, int64(4000), byUser[a].UnpaidCents)
+	require.Equal(t, int64(4000), byUser[b].UnpaidCents)
+	require.Len(t, budget.Settlements, 1)
+	require.Equal(t, b, budget.Settlements[0].FromUserID)
+	require.Equal(t, a, budget.Settlements[0].ToUserID)
+	require.Equal(t, int64(1000), budget.Settlements[0].AmountCents)
+}
+
+func TestBuildBudgetSettlementCancelsDebtWithoutInflatingTotals(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	dinner := Expense{
+		ID: uuid.New(), Title: "Cena", AmountCents: 10000, Distribution: DistributionGroup,
+		Payments: []Payment{{UserID: a, AmountCents: 10000}}, SpentAt: time.Now(),
+	}
+	cat := "settlement"
+	reimb := Expense{
+		ID: uuid.New(), Title: "Liquidación", Category: &cat, AmountCents: 5000,
+		Distribution: DistributionSelectedParticipants, ParticipantUserIDs: []uuid.UUID{a},
+		Payments: []Payment{{UserID: b, AmountCents: 5000}}, SpentAt: time.Now(),
+	}
+	items := []BudgetItem{
+		budgetItemFromExpense(dinner, []uuid.UUID{a, b}),
+		budgetItemFromExpense(reimb, []uuid.UUID{a, b}),
+	}
+	budget := buildBudget(items, []uuid.UUID{a, b})
+	require.Equal(t, int64(10000), budget.Totals.TotalCents)
+	require.Equal(t, int64(10000), budget.Totals.ConfirmedCents)
+	require.Equal(t, 1, budget.Totals.ExpensesCount)
+	require.Empty(t, budget.Settlements)
+	for _, m := range budget.Members {
+		require.Equal(t, int64(0), m.BalanceCents)
+	}
+}

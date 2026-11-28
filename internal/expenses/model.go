@@ -71,10 +71,11 @@ type UpdateExpenseInput struct {
 }
 
 const (
-	SourceExpense   = "expense"
-	SourceBooking   = "booking"
-	SourceFlight    = "flight"
-	SourceTransport = "transport"
+	SourceExpense    = "expense"
+	SourceBooking    = "booking"
+	SourceFlight     = "flight"
+	SourceTransport  = "transport"
+	SourceSettlement = "settlement"
 
 	ItemConfirmed = "confirmed"
 	ItemPending   = "pending"
@@ -114,6 +115,7 @@ type MemberBalance struct {
 	UserID       uuid.UUID
 	PaidCents    int64
 	OwedCents    int64
+	UnpaidCents  int64
 	BalanceCents int64
 }
 

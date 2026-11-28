@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/eleventravel/eleventravel-api/internal/expenseledger"
 	"github.com/eleventravel/eleventravel-api/internal/http/response"
 )
 
@@ -641,6 +642,10 @@ func (r *PostgresRepository) AddMember(ctx context.Context, actorUserID uuid.UUI
 		return PlanningMember{}, err
 	}
 
+	if err := expenseledger.RecalculateGroupExpenses(ctx, tx, planningID); err != nil {
+		return PlanningMember{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return PlanningMember{}, err
 	}
@@ -700,6 +705,10 @@ func (r *PostgresRepository) RemoveMember(ctx context.Context, actorUserID uuid.
 	}
 
 	if err := r.insertActivityTx(ctx, tx, planningID, &actorUserID, "member.removed", "member", &targetUserID, map[string]any{}); err != nil {
+		return err
+	}
+
+	if err := expenseledger.RecalculateGroupExpenses(ctx, tx, planningID); err != nil {
 		return err
 	}
 

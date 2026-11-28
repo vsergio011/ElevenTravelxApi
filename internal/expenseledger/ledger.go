@@ -6,6 +6,7 @@ package expenseledger
 import (
 	"context"
 	"errors"
+	"math/bits"
 	"sort"
 	"time"
 
@@ -85,7 +86,13 @@ func ComputeShares(distribution string, amountCents int64, members []uuid.UUID, 
 
 // ValidateShares checks the invariant enforced by the database: Σ shares = amount (except "individual").
 func ValidateShares(distribution string, amountCents int64, shares []Share) error {
-	if distribution == DistributionIndividual || len(shares) == 0 {
+	if distribution == DistributionIndividual {
+		return nil
+	}
+	if len(shares) == 0 {
+		if distribution == DistributionCustom {
+			return ErrInvalidShares
+		}
 		return nil
 	}
 	var total int64
@@ -97,6 +104,108 @@ func ValidateShares(distribution string, amountCents int64, shares []Share) erro
 	}
 	if total != amountCents {
 		return ErrInvalidShares
+	}
+	return nil
+}
+
+// AllocatePaidShares distributes totalPaidCents across participants proportionally to their shares,
+// guaranteeing Σ result = totalPaidCents (when totalPaidCents <= Σ shares) so group balances always sum to 0.
+func AllocatePaidShares(shares []Share, totalPaidCents int64) []Share {
+	result := make([]Share, len(shares))
+	if len(shares) == 0 || totalPaidCents <= 0 {
+		for i, share := range shares {
+			result[i] = Share{UserID: share.UserID, Cents: 0}
+		}
+		return result
+	}
+	var totalShares int64
+	for _, share := range shares {
+		totalShares += share.Cents
+	}
+	if totalShares <= 0 || totalPaidCents >= totalShares {
+		copy(result, shares)
+		return result
+	}
+
+	type remEntry struct {
+		index int
+		rem   uint64
+		id    string
+	}
+	rems := make([]remEntry, len(shares))
+	var allocated int64
+	for i, share := range shares {
+		if share.Cents <= 0 {
+			result[i] = Share{UserID: share.UserID, Cents: 0}
+			rems[i] = remEntry{index: i, rem: 0, id: share.UserID.String()}
+			continue
+		}
+		hi, lo := bits.Mul64(uint64(share.Cents), uint64(totalPaidCents))
+		q, r := bits.Div64(hi, lo, uint64(totalShares))
+		cents := int64(q)
+		result[i] = Share{UserID: share.UserID, Cents: cents}
+		allocated += cents
+		rems[i] = remEntry{index: i, rem: r, id: share.UserID.String()}
+	}
+	sort.Slice(rems, func(i, j int) bool {
+		if rems[i].rem != rems[j].rem {
+			return rems[i].rem > rems[j].rem
+		}
+		return rems[i].id < rems[j].id
+	})
+	leftover := totalPaidCents - allocated
+	for i := int64(0); i < leftover && int(i) < len(rems); i++ {
+		result[rems[i].index].Cents++
+	}
+	return result
+}
+
+// RecalculateGroupExpenses recomputes expense_participants for all group and individual expenses
+// in a planning using the current planning_members list. Run inside the member mutation transaction.
+func RecalculateGroupExpenses(ctx context.Context, q Querier, planningID uuid.UUID) error {
+	members, err := planningMembers(ctx, q, planningID)
+	if err != nil {
+		return err
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	rows, err := q.Query(ctx, `
+		SELECT id, amount_cents, distribution
+		FROM public.expenses
+		WHERE planning_id = $1 AND distribution IN ($2, $3)`,
+		planningID, DistributionGroup, DistributionIndividual)
+	if err != nil {
+		return err
+	}
+	type targetExpense struct {
+		id           uuid.UUID
+		amountCents  int64
+		distribution string
+	}
+	targets := []targetExpense{}
+	for rows.Next() {
+		var item targetExpense
+		if scanErr := rows.Scan(&item.id, &item.amountCents, &item.distribution); scanErr != nil {
+			rows.Close()
+			return scanErr
+		}
+		targets = append(targets, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range targets {
+		shares := ComputeShares(item.distribution, item.amountCents, members, nil, nil)
+		if _, err := q.Exec(ctx, `DELETE FROM public.expense_participants WHERE expense_id = $1`, item.id); err != nil {
+			return err
+		}
+		for _, share := range shares {
+			if _, err := q.Exec(ctx, `INSERT INTO public.expense_participants (expense_id, user_id, share_cents) VALUES ($1, $2, $3)`, item.id, share.UserID, share.Cents); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -395,19 +504,40 @@ func SyncItemExpense(ctx context.Context, q Querier, in ItemSync) error {
 	if err != nil {
 		return err
 	}
-	shares := ComputeShares(distribution, amount, members, in.ParticipantUserIDs, nil)
+	var existingCustom []Share
+	if exists && distribution == DistributionCustom {
+		rows, qErr := q.Query(ctx, `SELECT user_id, share_cents FROM public.expense_participants WHERE expense_id = $1 ORDER BY user_id`, current.ExpenseID)
+		if qErr != nil {
+			return qErr
+		}
+		for rows.Next() {
+			var share Share
+			if sErr := rows.Scan(&share.UserID, &share.Cents); sErr != nil {
+				rows.Close()
+				return sErr
+			}
+			existingCustom = append(existingCustom, share)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		write.CustomShares = existingCustom
+	}
+	shares := ComputeShares(distribution, amount, members, in.ParticipantUserIDs, existingCustom)
+	economicTotal := EconomicTotal(distribution, amount, len(shares))
 	finalPayments := append([]Payment(nil), current.Payments...)
 	switch {
 	case in.Payments != nil:
 		finalPayments = append([]Payment(nil), (*in.Payments)...)
 	case !exists && in.DefaultPayerUserID != nil:
-		finalPayments = []Payment{{UserID: *in.DefaultPayerUserID, AmountCents: amount, PaidAt: time.Now().UTC()}}
+		finalPayments = []Payment{{UserID: *in.DefaultPayerUserID, AmountCents: economicTotal, PaidAt: time.Now().UTC()}}
 	case exists && len(finalPayments) == 0 && in.DefaultPayerUserID != nil:
-		finalPayments = []Payment{{UserID: *in.DefaultPayerUserID, AmountCents: amount, PaidAt: time.Now().UTC()}}
-	case exists && in.FollowAmount && len(finalPayments) == 1 && finalPayments[0].AmountCents != amount:
-		finalPayments[0].AmountCents = amount
+		finalPayments = []Payment{{UserID: *in.DefaultPayerUserID, AmountCents: economicTotal, PaidAt: time.Now().UTC()}}
+	case exists && in.FollowAmount && len(finalPayments) == 1 && finalPayments[0].AmountCents != economicTotal:
+		finalPayments[0].AmountCents = economicTotal
 	}
-	if err := ValidatePayments(EconomicTotal(distribution, amount, len(shares)), finalPayments); err != nil {
+	if err := ValidatePayments(economicTotal, finalPayments); err != nil {
 		return err
 	}
 

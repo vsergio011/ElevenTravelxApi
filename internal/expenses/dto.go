@@ -93,6 +93,7 @@ func NewExpenseResponse(expense Expense) ExpenseResponse {
 	if expense.ItemStatus != nil && *expense.ItemStatus != "confirmed" {
 		status = ItemPending
 	}
+	economicTotal := expenseledger.EconomicTotal(expense.Distribution, expense.AmountCents, len(expense.Shares))
 	return ExpenseResponse{
 		ID:                 expense.ID.String(),
 		PlanningID:         expense.PlanningID.String(),
@@ -106,7 +107,7 @@ func NewExpenseResponse(expense Expense) ExpenseResponse {
 		ParticipantUserIDs: participants,
 		Shares:             newShareResponses(expense.Shares),
 		Payments:           payments,
-		PaymentStatus:      expenseledger.PaymentStatus(expense.AmountCents, expense.Payments),
+		PaymentStatus:      expenseledger.PaymentStatus(economicTotal, expense.Payments),
 		Status:             status,
 		Category:           expense.Category,
 		Notes:              expense.Notes,
@@ -155,6 +156,7 @@ type MemberBalanceResponse struct {
 	UserID       string `json:"user_id"`
 	PaidCents    int64  `json:"paid_cents"`
 	OwedCents    int64  `json:"owed_cents"`
+	UnpaidCents  int64  `json:"unpaid_cents"`
 	BalanceCents int64  `json:"balance_cents"`
 }
 
@@ -194,7 +196,7 @@ func NewBudgetResponse(budget Budget) BudgetResponse {
 	for _, member := range budget.Members {
 		members = append(members, MemberBalanceResponse{
 			UserID: member.UserID.String(), PaidCents: member.PaidCents,
-			OwedCents: member.OwedCents, BalanceCents: member.BalanceCents,
+			OwedCents: member.OwedCents, UnpaidCents: member.UnpaidCents, BalanceCents: member.BalanceCents,
 		})
 	}
 	settlements := make([]SettlementResponse, 0, len(budget.Settlements))
